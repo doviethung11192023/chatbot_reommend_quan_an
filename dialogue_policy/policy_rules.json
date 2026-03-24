@@ -1,0 +1,89 @@
+{
+  "rules": [
+    {
+      "id": "rule_001",
+      "name": "ask_missing_location",
+      "condition": {
+        "intent": "RECOMMEND_PLACE_NEARBY",
+        "missing_slots": ["LOCATION"],
+        "turn_count": {"max": 3}
+      },
+      "action": {
+        "type": "ASK_SLOT",
+        "slot_to_ask": "LOCATION",
+        "templates": [
+          "Bạn muốn tìm quán ở khu vực nào ạ?",
+          "Bạn đang ở đâu vậy?",
+          "Cho mình biết bạn muốn tìm quán gần khu vực nào nhé?"
+        ]
+      },
+      "priority": 10
+    },
+    {
+      "id": "rule_002",
+      "name": "clarify_vague_location",
+      "condition": {
+        "slots": {
+          "LOCATION": {
+            "value_pattern": "^(gần đây|nearby|around here)$",
+            "confidence": {"min": 0.7}
+          }
+        }
+      },
+      "action": {
+        "type": "CLARIFY",
+        "slot_to_clarify": "LOCATION",
+        "templates": [
+          "Bạn có thể cho mình biết tên quận hoặc địa chỉ cụ thể được không ạ?",
+          "Gần khu vực nào vậy bạn? Ví dụ quận 1, quận 3..."
+        ]
+      },
+      "priority": 9
+    },
+    {
+      "id": "rule_003",
+      "name": "recommend_when_complete",
+      "condition": {
+        "intent": "RECOMMEND_PLACE_NEARBY",
+        "state_complete": true
+      },
+      "action": {
+        "type": "RECOMMEND",
+        "templates": [
+          "Để mình tìm quán phù hợp cho bạn nhé! 🔍"
+        ]
+      },
+      "priority": 5
+    },
+    {
+      "id": "rule_004",
+      "name": "handle_small_talk",
+      "condition": {
+        "intent": "SMALL_TALK"
+      },
+      "action": {
+        "type": "RESPOND",
+        "templates": [
+          "Chào bạn! Mình có thể giúp bạn tìm quán ăn ngon nè 😊",
+          "Dạ, bạn cần tìm quán ăn gì ạ?"
+        ]
+      },
+      "priority": 3
+    },
+    {
+      "id": "rule_005",
+      "name": "handle_out_of_scope",
+      "condition": {
+        "intent": "OUT_OF_SCOPE"
+      },
+      "action": {
+        "type": "FALLBACK",
+        "templates": [
+          "Xin lỗi, mình chỉ hỗ trợ tìm kiếm quán ăn thôi ạ 😅",
+          "Mình chưa hiểu lắm. Bạn muốn tìm quán ăn phải không?"
+        ]
+      },
+      "priority": 1
+    }
+  ]
+}
