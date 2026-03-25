@@ -215,12 +215,17 @@ class DialogueOrchestrator:
             raise ValueError(f"Session {session_id} not found. Call create_session() first.")
 
         intent_pred = self.intent_model.predict(user_text)
+        print(f"DEBUG: Intent prediction: {intent_pred}")
+
         raw_intent = self._normalize_intent_label(intent_pred.get("intent", "NO_CLEAR_INTENT"))
+        print(f"DEBUG: Raw intent: {raw_intent}")
         confidence = float(intent_pred.get("confidence", 0.0))
+        print(f"DEBUG: Intent confidence: {confidence}")
 
         slots = self._normalize_slots(self.slot_model.extract_slots(user_text))
+        print(f"DEBUG: Extracted slots: {slots}")
         resolved_intent = self._resolve_intent(raw_intent, confidence, state_before, slots)
-
+        print(f"DEBUG: Resolved intent: {resolved_intent}")
         state_after = self.dst.update_state(
             session_id=session_id,
             user_utterance=user_text,
