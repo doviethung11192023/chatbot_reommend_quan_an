@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from cProfile import label
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol
 
@@ -221,11 +222,8 @@ class DialogueOrchestrator:
 
     def create_session(self, user_id: Optional[str] = None) -> str:
         return self.dst.create_session(user_id=user_id)
-    def convert_label_to_intent(label: str, mapping: dict) -> str:
-        # LABEL_9 -> 9
+    def convert_label_to_intent(self, label: str, mapping: dict) -> str:
         label_id = label.split("_")[-1]
-        
-        # map sang intent
         return mapping.get(label_id, "UNKNOWN")
     def process_user_message(self, session_id: str, user_text: str) -> Dict[str, Any]:
         state_before = self.dst.get_state(session_id)
