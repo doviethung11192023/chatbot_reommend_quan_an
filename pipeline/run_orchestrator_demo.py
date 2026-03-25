@@ -30,20 +30,34 @@ def main():
     print(f"✅ Session: {session_id}")
     print("Nhập 'quit' để thoát.\n")
 
-    while True:
-        text = input("🧑 User: ").strip()
-        if text.lower() in {"quit", "exit", "q"}:
-            print("👋 Bye")
-            break
-        if not text:
-            continue
+    # while True:
+    #     text = input("🧑 User: ").strip()
+    #     if text.lower() in {"quit", "exit", "q"}:
+    #         print("👋 Bye")
+    #         break
+    #     if not text:
+    #         continue
+
+    #     result = orchestrator.process_user_message(session_id, text)
+
+    #     print(f"🔎 Intent raw/resolved: {result['intent']['raw']} -> {result['intent']['resolved']}")
+    #     print(f"🧩 Slots: {result['slots']}")
+    #     print(f"🤖 Action: {result['action']['type']} ({result['action']['slot']})")
+    #     print(f"💬 Bot: {result['action']['template']}\n")
+    test_inputs = [
+    "Tôi muốn ăn bún bò",
+    "Quán nào giá rẻ?",
+    "Ở quận 1 có không?"
+    ]
+
+    for text in test_inputs:
+        print(f"\n🧑 User: {text}")
 
         result = orchestrator.process_user_message(session_id, text)
 
-        print(f"🔎 Intent raw/resolved: {result['intent']['raw']} -> {result['intent']['resolved']}")
+        print(f"🔎 Intent: {result['intent']['resolved']}")
         print(f"🧩 Slots: {result['slots']}")
-        print(f"🤖 Action: {result['action']['type']} ({result['action']['slot']})")
-        print(f"💬 Bot: {result['action']['template']}\n")
+        print(f"🤖 Bot: {result['action']['template']}")
 
 
 if __name__ == "__main__":
