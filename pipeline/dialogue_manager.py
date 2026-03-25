@@ -14,7 +14,20 @@ from dialogue_policy.rule_based_policy import RuleBasedPolicy
 from dialogue_state_tracking.dst import DialogueStateTracker
 from dialogue_state_tracking.state_schema import DialogueState, IntentType
 
-
+id2intent = {
+    "9": "RECOMMEND_FOOD",
+    "7": "NO_CLEAR_INTENT",
+    "10": "RECOMMEND_PLACE_NEARBY",
+    "1": "ASK_FOOD_TYPE",
+    "2": "ASK_LOCATION",
+    "4": "ASK_PRICE",
+    "3": "ASK_OPEN_TIME",
+    "5": "ASK_REVIEW",
+    "0": "ASK_DIRECTION",
+    "6": "COMPARE_PLACES",
+    "11": "SMALL_TALK",
+    "8": "OUT_OF_SCOPE"
+}
 class IntentPredictor(Protocol):
     def predict(self, text: str) -> Dict[str, Any]:
         ...
@@ -208,7 +221,12 @@ class DialogueOrchestrator:
 
     def create_session(self, user_id: Optional[str] = None) -> str:
         return self.dst.create_session(user_id=user_id)
-
+    def convert_label_to_intent(label: str, mapping: dict) -> str:
+        # LABEL_9 -> 9
+        label_id = label.split("_")[-1]
+        
+        # map sang intent
+        return mapping.get(label_id, "UNKNOWN")
     def process_user_message(self, session_id: str, user_text: str) -> Dict[str, Any]:
         state_before = self.dst.get_state(session_id)
         if state_before is None:
@@ -216,8 +234,9 @@ class DialogueOrchestrator:
 
         intent_pred = self.intent_model.predict(user_text)
         print(f"DEBUG: Intent prediction: {intent_pred}")
-
-        raw_intent = self._normalize_intent_label(intent_pred.get("intent", "NO_CLEAR_INTENT"))
+        raw_label = intent_pred.get("intent", "NO_CLEAR_INTENT")
+        intent = self.convert_label_to_intent(raw_label, id2intent)
+        raw_intent = self._normalize_intent_label(intent)
         print(f"DEBUG: Raw intent: {raw_intent}")
         confidence = float(intent_pred.get("confidence", 0.0))
         print(f"DEBUG: Intent confidence: {confidence}")
