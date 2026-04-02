@@ -1,0 +1,8 @@
+{"state":{"intent":"RECOMMEND_PLACE_NEARBY","slots":{"DISH":"phở","LOCATION":null},"missing_slots":["LOCATION"],"turn_count":1,"last_utterance":"Tìm quán phở"},"action":"ASK_SLOT"}
+{"state":{"intent":"RECOMMEND_PLACE_NEARBY","slots":{"DISH":"bún bò","LOCATION":"gần đây"},"missing_slots":[],"turn_count":2,"last_utterance":"gần đây"},"action":"CLARIFY"}
+{"state":{"intent":"RECOMMEND_PLACE_NEARBY","slots":{"DISH":"bún bò","LOCATION":"quận 1"},"missing_slots":[],"turn_count":2,"last_utterance":"quận 1"},"action":"RECOMMEND"}
+{"state":{"intent":"SMALL_TALK","slots":{},"missing_slots":[],"turn_count":1,"last_utterance":"xin chào"},"action":"RESPOND"}
+{"state":{"intent":"OUT_OF_SCOPE","slots":{},"missing_slots":[],"turn_count":1,"last_utterance":"viết code giúp tôi"},"action":"FALLBACK"}
+{"state":{"intent":"NO_CLEAR_INTENT","slots":{},"missing_slots":[],"turn_count":1,"last_utterance":"ờm"},"action":"FALLBACK"}
+{"state":{"intent":"RECOMMEND_FOOD","slots":{"DISH":null},"missing_slots":["DISH"],"turn_count":1,"last_utterance":"gợi ý món"},"action":"ASK_SLOT"}
+{"state":{"intent":"ASK_OPEN_TIME","slots":{"LOCATION":null},"missing_slots":["LOCATION"],"turn_count":1,"last_utterance":"mấy giờ mở cửa"},"action":"ASK_SLOT"}
