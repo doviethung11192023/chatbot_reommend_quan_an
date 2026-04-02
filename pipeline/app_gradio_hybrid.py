@@ -83,7 +83,7 @@ def main():
     with gr.Blocks(title="Hybrid DST Chatbot") as demo:
         gr.Markdown("## Hybrid Chatbot (Rule → ML → LLM) + DST Runtime KPIs")
 
-        chatbot = gr.Chatbot(height=420)
+        chatbot = gr.Chatbot(height=420, type="messages")
         msg = gr.Textbox(label="Nhập câu hỏi", placeholder="Ví dụ: Tìm quán bún bò ở quận 1", lines=2)
         send = gr.Button("Gửi", variant="primary")
         clear = gr.Button("Clear")
@@ -114,7 +114,10 @@ def main():
 
             answer = f"{bot_text}\n\n(intent={intent}, action={action}, slots={slots})"
 
-            history = history + [(user_text, answer)]
+            history = history + [
+                {"role": "user", "content": user_text},
+                {"role": "assistant", "content": answer},
+            ]
 
             st["turns"] += 1
             st["latencies_ms"].append(latency_ms)
@@ -128,8 +131,7 @@ def main():
             st = {"session_id": new_session, "turns": 0, "latencies_ms": [], "complete_hits": 0}
             return [], st, format_kpis(st), {}
 
-        # send.click(on_send, [msg, chatbot, app_state], [chatbot, app_state, kpis, debug])
-        send.click(on_send, [msg, chatbot, app_state], [chatbot, app_state, kpis, debug]).then(lambda: "", None, msg)
+        send.click(on_send, [msg, chatbot, app_state], [chatbot, app_state, kpis, debug])
         msg.submit(on_send, [msg, chatbot, app_state], [chatbot, app_state, kpis, debug])
         clear.click(on_clear, outputs=[chatbot, app_state, kpis, debug])
 
