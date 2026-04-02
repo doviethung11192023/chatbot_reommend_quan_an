@@ -54,6 +54,7 @@ def main():
         print(f"\n🧑 User: {text}")
 
         result = orchestrator.process_user_message(session_id, text)
+       
 
         print(f"🔎 Intent: {result['intent']['resolved']}")
         print(f"🧩 Slots: {result['slots']}")

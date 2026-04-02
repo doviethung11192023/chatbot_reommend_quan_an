@@ -92,6 +92,8 @@ class DialogueState:
         """Slots còn thiếu"""
         required = set(self.get_required_slots())
         filled = set(self.filled_slots.keys())
+        print(f"required: {required}, filled: {filled}")
+        print(f"missing: {required - filled}")
         return list(required - filled)
     
     def is_complete(self) -> bool:
