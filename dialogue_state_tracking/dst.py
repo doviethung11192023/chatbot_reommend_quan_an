@@ -82,10 +82,11 @@ class DialogueStateTracker:
             intent_confidence=intent_confidence,
             slots_extracted=slot_objects
         )
+
         
         # Add turn to state
         state.add_turn(turn)
-        
+        print(f"xem state sau khi add turn: {state}")
         return state
     
     def resolve_coreference(self, state: DialogueState) -> DialogueState:
