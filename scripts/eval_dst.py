@@ -46,6 +46,7 @@ def build_orchestrator(args) -> DialogueOrchestrator:
         ml_policy=ml_policy,
         llm_policy=llm_policy,
         ml_conf_threshold=args.ml_threshold,
+        debug=True,
     )
 
     return DialogueOrchestrator(intent_model=intent_model, slot_model=slot_model, policy=policy)

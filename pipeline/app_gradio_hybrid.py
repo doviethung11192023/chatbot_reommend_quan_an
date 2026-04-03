@@ -12,12 +12,13 @@ from dialogue_policy.hybrid_policy import HybridPolicy
 from dialogue_policy.ml_policy import SklearnMLPolicy
 from dialogue_policy.rule_based_policy import RuleBasedPolicy
 from pipeline.dialogue_manager import DialogueOrchestrator, IntentClassifierHF, SlotExtractorHF
-
-
+from dialogue_state_tracking.dst import DialogueStateTracker
+import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 def build_orchestrator(args) -> DialogueOrchestrator:
     intent_model = IntentClassifierHF(args.intent_model_path)
     slot_model = SlotExtractorHF(args.slot_model_path)
-    rule_policy = RuleBasedPolicy(rules_path=args.rules_path) if args.rules_path else RuleBasedPolicy()
+    rule_policy = RuleBasedPolicy(rules_path=args.rules_path, debug=True) if args.rules_path else RuleBasedPolicy(debug=True)
     ml_policy = SklearnMLPolicy(args.ml_policy_path) if args.ml_policy_path else None
 
     llm_policy = None
@@ -33,12 +34,15 @@ def build_orchestrator(args) -> DialogueOrchestrator:
         ml_policy=ml_policy,
         llm_policy=llm_policy,
         ml_conf_threshold=args.ml_threshold,
+        debug=True,
     )
 
     return DialogueOrchestrator(
         intent_model=intent_model,
         slot_model=slot_model,
+        dst=DialogueStateTracker(debug=True),
         policy=policy,
+        debug = True,
     )
 
 

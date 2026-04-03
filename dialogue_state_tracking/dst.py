@@ -155,21 +155,101 @@
 #     print("\n=== Turn 2 ===")
 #     print(f"Filled slots: {state.filled_slots}")
 #     print(f"Context: {state.get_context_summary()}")
+
+# from __future__ import annotations
+
+# import uuid
+# from typing import Dict, List, Optional
+
+# from .state_schema import DialogueState, IntentType, Slot, Turn
+
+
+# class DialogueStateTracker:
+#     def __init__(self):
+#         self.sessions: Dict[str, DialogueState] = {}
+
+#     def create_session(self, user_id: Optional[str] = None) -> str:
+#         session_id = str(uuid.uuid4())
+#         self.sessions[session_id] = DialogueState(session_id=session_id, user_id=user_id)
+#         return session_id
+
+#     def get_state(self, session_id: str) -> Optional[DialogueState]:
+#         return self.sessions.get(session_id)
+
+#     def clear_session(self, session_id: str) -> None:
+#         self.sessions.pop(session_id, None)
+
+#     def get_active_sessions(self) -> List[str]:
+#         return list(self.sessions.keys())
+
+#     def update_state(
+#         self,
+#         session_id: str,
+#         user_utterance: str,
+#         intent: str,
+#         intent_confidence: float,
+#         slots: List[Dict],
+#     ) -> DialogueState:
+#         state = self.get_state(session_id)
+#         if not state:
+#             raise ValueError(f"Session {session_id} not found")
+
+#         intent_enum = self._to_intent(intent)
+
+#         slot_objects = [
+#             Slot(
+#                 type=str(s["type"]).upper(),
+#                 value=str(s["value"]).strip(),
+#                 confidence=float(s.get("confidence", 0.0)),
+#                 turn_index=len(state.turns),
+#             )
+#             for s in slots
+#             if s.get("type") and s.get("value")
+#         ]
+
+#         turn = Turn(
+#             turn_index=len(state.turns),
+#             user_utterance=user_utterance,
+#             intent=intent_enum,
+#             intent_confidence=float(intent_confidence),
+#             slots_extracted=slot_objects,
+#         )
+
+#         state.add_turn(turn)
+#         return state
+
+#     @staticmethod
+#     def _to_intent(intent: str) -> IntentType:
+#         normalized = str(intent).strip().upper()
+#         if normalized in IntentType.__members__:
+#             return IntentType[normalized]
+#         return IntentType.NO_CLEAR_INTENT
+
+
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Dict, List, Optional
 
 from .state_schema import DialogueState, IntentType, Slot, Turn
 
+logger = logging.getLogger(__name__)
+
 
 class DialogueStateTracker:
-    def __init__(self):
+    def __init__(self, debug: bool = False):
         self.sessions: Dict[str, DialogueState] = {}
+        self.debug = debug
+
+    def _dbg(self, msg: str, *args) -> None:
+        if self.debug:
+            logger.info("[DST] " + msg, *args)
 
     def create_session(self, user_id: Optional[str] = None) -> str:
         session_id = str(uuid.uuid4())
         self.sessions[session_id] = DialogueState(session_id=session_id, user_id=user_id)
+        self._dbg("create_session user_id=%s -> session_id=%s", user_id, session_id)
         return session_id
 
     def get_state(self, session_id: str) -> Optional[DialogueState]:
@@ -177,6 +257,7 @@ class DialogueStateTracker:
 
     def clear_session(self, session_id: str) -> None:
         self.sessions.pop(session_id, None)
+        self._dbg("clear_session session_id=%s", session_id)
 
     def get_active_sessions(self) -> List[str]:
         return list(self.sessions.keys())
@@ -193,7 +274,22 @@ class DialogueStateTracker:
         if not state:
             raise ValueError(f"Session {session_id} not found")
 
+        before_summary = state.get_context_summary()
+        self._dbg(
+            "update_state start session_id=%s turn=%d utterance=%r",
+            session_id,
+            len(state.turns),
+            user_utterance,
+        )
+        self._dbg("before_state=%s", before_summary)
+
         intent_enum = self._to_intent(intent)
+        self._dbg(
+            "intent raw=%s -> enum=%s (confidence=%.4f)",
+            intent,
+            intent_enum.name,
+            float(intent_confidence),
+        )
 
         slot_objects = [
             Slot(
@@ -205,6 +301,19 @@ class DialogueStateTracker:
             for s in slots
             if s.get("type") and s.get("value")
         ]
+        self._dbg("slots_in=%s", slots)
+        self._dbg(
+            "slots_normalized=%s",
+            [
+                {
+                    "type": x.type,
+                    "value": x.value,
+                    "confidence": x.confidence,
+                    "turn_index": x.turn_index,
+                }
+                for x in slot_objects
+            ],
+        )
 
         turn = Turn(
             turn_index=len(state.turns),
@@ -215,6 +324,15 @@ class DialogueStateTracker:
         )
 
         state.add_turn(turn)
+
+        after_summary = state.get_context_summary()
+        self._dbg("after_state=%s", after_summary)
+        self._dbg(
+            "filled_slots_delta before=%s -> after=%s",
+            before_summary.get("filled_slots", {}),
+            after_summary.get("filled_slots", {}),
+        )
+
         return state
 
     @staticmethod

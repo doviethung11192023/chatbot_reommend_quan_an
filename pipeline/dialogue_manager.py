@@ -1,6 +1,6 @@
 
 from __future__ import annotations
-
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol
@@ -187,7 +187,7 @@ class SlotExtractorHF:
         flush()
         return entities
 
-
+logger = logging.getLogger(__name__)
 class DialogueOrchestrator:
     FOLLOWUP_INTENTS = {"ASK_LOCATION", "ASK_PRICE", "ASK_OPEN_TIME", "NO_CLEAR_INTENT"}
 
@@ -198,29 +198,99 @@ class DialogueOrchestrator:
         dst: Optional[DialogueStateTracker] = None,
         policy: Optional[Any] = None,
         intent_conf_threshold: float = 0.5,
+        debug: bool = False,    
     ):
         self.intent_model = intent_model
         self.slot_model = slot_model
         self.dst = dst or DialogueStateTracker()
         self.policy = policy or RuleBasedPolicy()
         self.intent_conf_threshold = intent_conf_threshold
+        self.debug = debug  # <-- added
 
+    def _dbg(self, msg: str, *args: Any) -> None:
+        if self.debug:
+            logger.info("[DialogueOrchestrator] " + msg, *args)
+    # def create_session(self, user_id: Optional[str] = None) -> str:
+
+    #     return self.dst.create_session(user_id=user_id)
     def create_session(self, user_id: Optional[str] = None) -> str:
-        return self.dst.create_session(user_id=user_id)
+        session_id = self.dst.create_session(user_id=user_id)
+        self._dbg("create_session user_id=%s -> session_id=%s", user_id, session_id)
+        return session_id
+    # def process_user_message(self, session_id: str, user_text: str) -> Dict[str, Any]:
+    #     state_before = self.dst.get_state(session_id)
+    #     if state_before is None:
+    #         raise ValueError(f"Session {session_id} not found. Call create_session() first.")
 
+    #     intent_pred = self.intent_model.predict(user_text)
+    #     raw_label = intent_pred.get("intent", "NO_CLEAR_INTENT")
+    #     raw_intent = self._normalize_intent_label(raw_label)
+    #     confidence = float(intent_pred.get("confidence", 0.0))
+
+    #     slots = self._normalize_slots(self.slot_model.extract_slots(user_text))
+    #     resolved_intent = self._resolve_intent(raw_intent, confidence, state_before, slots)
+
+    #     state_after = self.dst.update_state(
+    #         session_id=session_id,
+    #         user_utterance=user_text,
+    #         intent=resolved_intent,
+    #         intent_confidence=confidence,
+    #         slots=slots,
+    #     )
+
+    #     action = self.policy.decide_action(state_after)
+    #     state_after.turns[-1].bot_action = action.type
+    #     state_after.turns[-1].bot_response = action.template
+
+    #     policy_log = None
+    #     if hasattr(self.policy, "get_last_decision_log"):
+    #         policy_log = self.policy.get_last_decision_log()
+
+    #     result = OrchestratorResult(
+    #         session_id=session_id,
+    #         user_text=user_text,
+    #         intent_raw=raw_intent,
+    #         intent_resolved=resolved_intent,
+    #         intent_confidence=confidence,
+    #         slots=slots,
+    #         action_type=action.type,
+    #         action_slot=action.slot,
+    #         action_template=action.template or "",
+    #         state_summary=state_after.get_context_summary(),
+    #         policy_log=policy_log,
+    #     )
+    #     return result.to_dict()
     def process_user_message(self, session_id: str, user_text: str) -> Dict[str, Any]:
+        self._dbg("process_user_message(session_id=%s, user_text=%r)", session_id, user_text)
+
         state_before = self.dst.get_state(session_id)
         if state_before is None:
             raise ValueError(f"Session {session_id} not found. Call create_session() first.")
 
+        self._dbg("state_before=%s", state_before.get_context_summary())
+
+        # 1) Intent prediction
         intent_pred = self.intent_model.predict(user_text)
         raw_label = intent_pred.get("intent", "NO_CLEAR_INTENT")
         raw_intent = self._normalize_intent_label(raw_label)
         confidence = float(intent_pred.get("confidence", 0.0))
+        self._dbg(
+            "intent_pred raw_label=%s normalized=%s confidence=%.4f",
+            raw_label,
+            raw_intent,
+            confidence,
+        )
 
-        slots = self._normalize_slots(self.slot_model.extract_slots(user_text))
+        # 2) Slot extraction
+        raw_slots = self.slot_model.extract_slots(user_text)
+        slots = self._normalize_slots(raw_slots)
+        self._dbg("slots raw=%s normalized=%s", raw_slots, slots)
+
+        # 3) Resolve intent with dialogue context
         resolved_intent = self._resolve_intent(raw_intent, confidence, state_before, slots)
+        self._dbg("resolved_intent=%s", resolved_intent)
 
+        # 4) Update DST
         state_after = self.dst.update_state(
             session_id=session_id,
             user_utterance=user_text,
@@ -228,14 +298,23 @@ class DialogueOrchestrator:
             intent_confidence=confidence,
             slots=slots,
         )
+        self._dbg("state_after=%s", state_after.get_context_summary())
 
+        # 5) Policy decision
         action = self.policy.decide_action(state_after)
         state_after.turns[-1].bot_action = action.type
         state_after.turns[-1].bot_response = action.template
+        self._dbg(
+            "policy_action type=%s slot=%s template=%r",
+            action.type,
+            action.slot,
+            action.template,
+        )
 
         policy_log = None
         if hasattr(self.policy, "get_last_decision_log"):
             policy_log = self.policy.get_last_decision_log()
+            self._dbg("policy_log=%s", policy_log)
 
         result = OrchestratorResult(
             session_id=session_id,
@@ -250,8 +329,9 @@ class DialogueOrchestrator:
             state_summary=state_after.get_context_summary(),
             policy_log=policy_log,
         )
-        return result.to_dict()
-
+        out = result.to_dict()
+        self._dbg("result=%s", out)
+        return out
     def _normalize_intent_label(self, label: str) -> str:
         raw = str(label).strip().upper().replace(" ", "_")
 
