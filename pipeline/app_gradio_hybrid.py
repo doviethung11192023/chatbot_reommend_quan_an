@@ -35,6 +35,8 @@ def build_orchestrator(args) -> DialogueOrchestrator:
         llm_policy=llm_policy,
         ml_conf_threshold=args.ml_threshold,
         debug=True,
+        repeat_window=3,
+        allow_ml_llm_escape=True,
     )
 
     return DialogueOrchestrator(
