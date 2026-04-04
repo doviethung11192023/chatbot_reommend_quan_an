@@ -1,6 +1,20 @@
 {
   "rules": [
     {
+      "id": "rule_000_cancel_or_goodbye",
+      "name": "handle_cancel_or_goodbye",
+      "condition": {
+        "intent": "NO_CLEAR_INTENT"
+      },
+      "action": {
+        "type": "RESPOND",
+        "templates": [
+          "Ok bạn nhé, khi nào cần tìm quán thì nhắn mình bất cứ lúc nào 👌"
+        ]
+      },
+      "priority": 11
+    },
+    {
       "id": "rule_001",
       "name": "ask_missing_location",
       "condition": {

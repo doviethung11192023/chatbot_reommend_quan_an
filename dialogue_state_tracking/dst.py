@@ -351,7 +351,8 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from .state_schema import DialogueState, IntentType, Slot, Turn
-
+from .intent_shift_detector import IntentShiftDetector
+from .semantic_slot_ranking import SemanticSlotRanker
 try:
     from .slot_guard import SlotValidator
 except Exception:
@@ -365,6 +366,8 @@ class DialogueStateTracker:
         self.debug = debug
         self.enable_validator = enable_validator and SlotValidator is not None
         self.slot_validator = SlotValidator(debug=debug) if self.enable_validator else None
+        self.intent_shift_detector = IntentShiftDetector()
+        self.slot_ranker = SemanticSlotRanker()
 
     def _dbg(self, msg: str, *args: Any) -> None:
         if self.debug:
@@ -398,7 +401,28 @@ class DialogueStateTracker:
         turn_index = len(state.turns)
         before_summary = state.get_context_summary()
         intent_enum = self._to_intent(intent)
+        accepted_slots = self._validate_slots(slots, intent_enum, user_utterance, turn_index)
+        self._dbg("accepted_slots=%s", [s.snapshot() for s in accepted_slots])
 
+        # intent shift detector
+        shift = self.intent_shift_detector.detect(
+            user_text=user_utterance,
+            current_intent=state.current_intent,
+            predicted_intent=intent_enum,
+            accepted_slots=[{"type": s.type, "value": s.value, "confidence": s.confidence} for s in accepted_slots],
+        )
+        if shift.override_intent is not None:
+            intent_enum = shift.override_intent
+
+        if shift.reset_mode == "hard":
+            state.reset_slots(preserve=shift.preserve_slots, reason=f"intent_shift:{shift.note}")
+        elif shift.reset_mode == "soft":
+            # soft reset: giữ slot cốt lõi
+            state.reset_slots(preserve=["LOCATION"], reason=f"intent_shift:{shift.note}")
+
+        state.context["dialogue_act"] = shift.dialogue_act
+        state.context["block_recommend"] = bool(shift.block_recommend)
+        state.context["intent_shift_note"] = shift.note
         self._dbg(
             "update_state start session_id=%s turn=%d utterance=%r intent=%s",
             session_id, turn_index, user_utterance, intent_enum.name
@@ -416,7 +440,11 @@ class DialogueStateTracker:
             self._dbg("intent_shift_reset=%s", shift_log)
 
         # 3) Semantic merge
-        merged_slots, merge_logs = self._semantic_merge(state, accepted_slots)
+        merged_slots, merge_logs = self._semantic_merge(
+            state=state,
+            new_slots=accepted_slots,
+            force_replace_slots=set(shift.force_replace_slots),
+        )
         self._dbg("merge_logs=%s", merge_logs)
 
         # 4) Commit turn
@@ -427,6 +455,10 @@ class DialogueStateTracker:
             intent_confidence=float(intent_confidence),
             slots_extracted=accepted_slots,
         )
+
+        
+        state.context["state_quality"] = state.get_state_quality()
+        state.context["slot_conflicts"] = len(state.slot_conflicts)
         state.add_turn(turn, merge_slots=False)
         state.filled_slots = merged_slots
         state.context["state_quality"] = state.get_state_quality()
@@ -503,8 +535,12 @@ class DialogueStateTracker:
             "preserve": preserve,
             "removed": {k: v.snapshot() for k, v in removed.items()},
         }
-
-    def _semantic_merge(self, state: DialogueState, new_slots: List[Slot]) -> tuple[Dict[str, Slot], List[Dict[str, Any]]]:
+    def _semantic_merge(
+        self,
+        state: DialogueState,
+        new_slots: List[Slot],
+        force_replace_slots: set[str],
+    ) -> tuple[Dict[str, Slot], List[Dict[str, Any]]]:
         merged = dict(state.filled_slots)
         logs: List[Dict[str, Any]] = []
 
@@ -515,28 +551,57 @@ class DialogueStateTracker:
                 logs.append({"type": slot.type, "action": "add", "value": slot.value, "confidence": slot.confidence})
                 continue
 
-            replace, reason = self._should_replace(prev, slot, state.current_intent)
+            replace, reason = self.slot_ranker.should_replace(
+                old=prev,
+                new=slot,
+                force=slot.type in force_replace_slots,
+            )
+
             if replace:
                 slot.history = list(prev.history) + [prev.snapshot()]
                 merged[slot.type] = slot
-                logs.append({
-                    "type": slot.type,
-                    "action": "replace",
-                    "reason": reason,
-                    "old": prev.snapshot(),
-                    "new": slot.snapshot(),
-                })
                 state.record_conflict(slot.type, prev, slot, reason)
+                logs.append({"type": slot.type, "action": "replace", "reason": reason, "old": prev.snapshot(), "new": slot.snapshot()})
             else:
-                logs.append({
-                    "type": slot.type,
-                    "action": "keep",
-                    "reason": reason,
-                    "old": prev.snapshot(),
-                    "new": slot.snapshot(),
-                })
+                # vẫn ghi conflict nếu value khác để tracking
+                if prev.value.strip().lower() != slot.value.strip().lower():
+                    state.record_conflict(slot.type, prev, slot, reason)
+                logs.append({"type": slot.type, "action": "keep", "reason": reason, "old": prev.snapshot(), "new": slot.snapshot()})
 
         return merged, logs
+    # def _semantic_merge(self, state: DialogueState, new_slots: List[Slot]) -> tuple[Dict[str, Slot], List[Dict[str, Any]]]:
+    #     merged = dict(state.filled_slots)
+    #     logs: List[Dict[str, Any]] = []
+
+    #     for slot in new_slots:
+    #         prev = merged.get(slot.type)
+    #         if prev is None:
+    #             merged[slot.type] = slot
+    #             logs.append({"type": slot.type, "action": "add", "value": slot.value, "confidence": slot.confidence})
+    #             continue
+
+    #         replace, reason = self._should_replace(prev, slot, state.current_intent)
+    #         if replace:
+    #             slot.history = list(prev.history) + [prev.snapshot()]
+    #             merged[slot.type] = slot
+    #             logs.append({
+    #                 "type": slot.type,
+    #                 "action": "replace",
+    #                 "reason": reason,
+    #                 "old": prev.snapshot(),
+    #                 "new": slot.snapshot(),
+    #             })
+    #             state.record_conflict(slot.type, prev, slot, reason)
+    #         else:
+    #             logs.append({
+    #                 "type": slot.type,
+    #                 "action": "keep",
+    #                 "reason": reason,
+    #                 "old": prev.snapshot(),
+    #                 "new": slot.snapshot(),
+    #             })
+
+    #     return merged, logs
 
     def _should_replace(self, old: Slot, new: Slot, current_intent: Optional[IntentType]) -> tuple[bool, str]:
         if old.value.strip().lower() == new.value.strip().lower():

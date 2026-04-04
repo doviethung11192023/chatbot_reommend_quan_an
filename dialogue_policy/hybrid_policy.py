@@ -309,6 +309,13 @@ class HybridPolicy:
     #     self._last_log = PolicyDecisionLog(source="FALLBACK", action="FALLBACK")
     #     return self._build_action("FALLBACK", state)
     def decide_action(self, state: DialogueState) -> Action:
+        dialogue_act = str(getattr(state, "context", {}).get("dialogue_act", "") or "").upper()
+        if dialogue_act in {"CANCEL", "GOODBYE"}:
+            self._last_log = PolicyDecisionLog(source="RULE", action="RESPOND", confidence=1.0, note=f"dialogue_act={dialogue_act}")
+            return self._build_action("RESPOND", state)
+
+        if bool(getattr(state, "context", {}).get("block_recommend", False)):
+            self._dbg("block_recommend=True -> suppress direct recommend")
         quality = getattr(state, "get_state_quality", lambda: 1.0)()
         self._dbg(
             "decide_action state_quality=%.4f complete=%s missing=%s intent=%s",
@@ -344,6 +351,15 @@ class HybridPolicy:
     
     def _apply_state_quality_guard(self, state: DialogueState, action: Action) -> Action:
         quality = getattr(state, "get_state_quality", lambda: 1.0)()
+        block_recommend = bool(getattr(state, "context", {}).get("block_recommend", False))
+
+        if block_recommend and action.type == "RECOMMEND":
+            self._dbg("downgrade RECOMMEND -> CLARIFY due block_recommend flag")
+            return self._build_action("CLARIFY", state)
+
+        if quality < self.state_quality_threshold and action.type == "RECOMMEND":
+            self._dbg("downgrade RECOMMEND -> CLARIFY due low state quality=%.4f", quality)
+            return self._build_action("CLARIFY", state)
         if quality < self.state_quality_threshold and action.type == "RECOMMEND":
             self._dbg("downgrade RECOMMEND -> CLARIFY due low state quality=%.4f", quality)
             return self._build_action("CLARIFY", state)
