@@ -228,10 +228,14 @@ def format_kpis(stats: Dict[str, Any]) -> str:
     intent = stats.get("resolved_intent", "N/A")
     missing_slots = stats.get("missing_slots", [])
     slot_conflicts = stats.get("slot_conflicts", 0)
-
+    # ** NEW: Thêm LLM analysis debug **
+    llm_analysis = stats.get("llm_analysis", {})
+    llm_real_intent = llm_analysis.get("real_intent", "N/A")
+    llm_conf = llm_analysis.get("confidence", 0.0)
     return (
         f"### Debug Summary\n"
         f"- **Intent**: `{intent}`\n"
+        f"- **LLM Real Intent**: `{llm_real_intent}` (conf={llm_conf:.2f})\n"
         f"- **Policy source**: `{policy_source}`\n"
         f"- **State quality**: `{state_quality:.3f}`\n" if isinstance(state_quality, (float, int)) else f"- **State quality**: `N/A`\n"
     ) + (
@@ -280,7 +284,11 @@ def main():
             state_obj = orchestrator.dst.get_state(session_id)
             if state_obj and hasattr(state_obj, "get_state_quality"):
                 state_quality = state_obj.get_state_quality()
-
+        # Extract LLM analysis nếu có
+        llm_analysis = {}
+        state_obj = orchestrator.dst.get_state(session_id)
+        if state_obj and hasattr(state_obj, "context"):
+            llm_analysis = state_obj.context.get("llm_intent_analysis", {})
         logger.info(
             "[App] session_id=%s intent=%s action=%s policy=%s state_quality=%s state=%s",
             session_id,
@@ -299,6 +307,7 @@ def main():
                 "state_quality": state_quality,
                 "missing_slots": state.get("missing_slots", []),
                 "slot_conflicts": state.get("slot_conflicts", 0),
+                "llm_analysis": llm_analysis,  # ** NEW **
             }
         )
 

@@ -35,10 +35,29 @@ class IntentShiftDetector:
         current_intent: Optional[IntentType],
         predicted_intent: IntentType,
         accepted_slots: List[Dict[str, Any]],
+        llm_intent_analysis=None,
     ) -> IntentShiftDecision:
         text = (user_text or "").strip().lower()
         d = IntentShiftDecision()
-
+        # Nếu có LLM analysis, dùng nó làm primary signal
+        if llm_intent_analysis:
+            real_intent = llm_intent_analysis.get("real_intent", "continue")
+            confidence = llm_intent_analysis.get("confidence", 0.0)
+            
+            if real_intent == "cancel" and confidence > 0.7:
+                d.override_intent = IntentType.NO_CLEAR_INTENT
+                d.dialogue_act = "CANCEL"
+                d.reset_mode = "hard"
+                d.block_recommend = True
+                d.note = f"llm_detected_cancel (conf={confidence})"
+                return d
+            
+            if real_intent == "change_dish" and confidence > 0.7:
+                d.override_intent = IntentType.RECOMMEND_FOOD
+                d.reset_mode = "soft"
+                d.preserve_slots = list(llm_intent_analysis.get("positive_slots", []))
+                d.note = f"llm_detected_change_dish (conf={confidence})"
+                return d
         if any(re.search(p, text) for p in self.CANCEL_PATTERNS):
             d.override_intent = IntentType.NO_CLEAR_INTENT
             d.dialogue_act = "CANCEL"

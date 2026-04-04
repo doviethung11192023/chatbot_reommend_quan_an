@@ -1,351 +1,9 @@
-# """
-# Dialogue State Tracker
-# Quản lý trạng thái hội thoại
-# """
 
-# from typing import Dict, List, Optional
-# import uuid
-# from .state_schema import DialogueState, Turn, Slot, IntentType
-
-
-# class DialogueStateTracker:
-#     """
-#     Tracker quản lý dialogue states của nhiều sessions
-    
-#     Features:
-#     - Multi-session support
-#     - State persistence
-#     - Slot merging logic
-#     - Context resolution
-#     """
-    
-#     def __init__(self):
-#         self.sessions: Dict[str, DialogueState] = {}
-    
-#     def create_session(self, user_id: Optional[str] = None) -> str:
-#         """Tạo session mới"""
-#         session_id = str(uuid.uuid4())
-#         self.sessions[session_id] = DialogueState(
-#             session_id=session_id,
-#             user_id=user_id
-#         )
-#         return session_id
-    
-#     def get_state(self, session_id: str) -> Optional[DialogueState]:
-#         """Lấy state của session"""
-#         return self.sessions.get(session_id)
-    
-#     def update_state(
-#         self,
-#         session_id: str,
-#         user_utterance: str,
-#         intent: str,
-#         intent_confidence: float,
-#         slots: List[Dict]
-#     ) -> DialogueState:
-#         """
-#         Update state với turn mới
-        
-#         Args:
-#             session_id: ID của session
-#             user_utterance: Câu nói của user
-#             intent: Intent từ classifier
-#             intent_confidence: Confidence score
-#             slots: List slots từ slot extractor
-        
-#         Returns:
-#             Updated DialogueState
-#         """
-#         state = self.get_state(session_id)
-#         if not state:
-#             raise ValueError(f"Session {session_id} not found")
-        
-#         # Convert intent string to enum
-#         intent_enum = IntentType[intent]
-        
-#         # Convert slots dict to Slot objects
-#         slot_objects = [
-#             Slot(
-#                 type=s['type'],
-#                 value=s['value'],
-#                 confidence=s['confidence'],
-#                 turn_index=len(state.turns)
-#             )
-#             for s in slots
-#         ]
-        
-#         # Create new turn
-#         turn = Turn(
-#             turn_index=len(state.turns),
-#             user_utterance=user_utterance,
-#             intent=intent_enum,
-#             intent_confidence=intent_confidence,
-#             slots_extracted=slot_objects
-#         )
-
-        
-#         # Add turn to state
-#         state.add_turn(turn)
-#         print(f"xem state sau khi add turn: {state}")
-#         return state
-    
-#     def resolve_coreference(self, state: DialogueState) -> DialogueState:
-#         """
-#         Xử lý đại từ chỉ định (it, that, đó, này)
-        
-#         Example:
-#         Turn 1: "Tìm quán phở"
-#         Turn 2: "Nó ở đâu?" → resolve "nó" -> "quán phở"
-#         """
-#         # TODO: Implement coreference resolution
-#         # Placeholder for now
-#         return state
-    
-#     def clear_session(self, session_id: str):
-#         """Xóa session"""
-#         if session_id in self.sessions:
-#             del self.sessions[session_id]
-    
-#     def get_active_sessions(self) -> List[str]:
-#         """Lấy danh sách sessions đang active"""
-#         return list(self.sessions.keys())
-
-
-# # ============================================================
-# # USAGE EXAMPLE
-# # ============================================================
-
-# if __name__ == "__main__":
-#     # Initialize tracker
-#     dst = DialogueStateTracker()
-    
-#     # Create session
-#     session_id = dst.create_session(user_id="user_123")
-#     print(f"Created session: {session_id}")
-    
-#     # Turn 1
-#     state = dst.update_state(
-#         session_id=session_id,
-#         user_utterance="Tìm quán phở gần đây",
-#         intent="RECOMMEND_PLACE_NEARBY",
-#         intent_confidence=0.95,
-#         slots=[
-#             {'type': 'DISH', 'value': 'phở', 'confidence': 0.98},
-#             {'type': 'LOCATION', 'value': 'gần đây', 'confidence': 0.85}
-#         ]
-#     )
-    
-#     print("\n=== Turn 1 ===")
-#     print(f"Intent: {state.current_intent}")
-#     print(f"Filled slots: {state.filled_slots}")
-#     print(f"Missing slots: {state.get_missing_slots()}")
-#     print(f"Is complete: {state.is_complete()}")
-    
-#     # Turn 2: Add more info
-#     state = dst.update_state(
-#         session_id=session_id,
-#         user_utterance="Giá rẻ nhé",
-#         intent="RECOMMEND_PLACE_NEARBY",
-#         intent_confidence=0.90,
-#         slots=[
-#             {'type': 'PRICE', 'value': 'rẻ', 'confidence': 0.92}
-#         ]
-#     )
-    
-#     print("\n=== Turn 2 ===")
-#     print(f"Filled slots: {state.filled_slots}")
-#     print(f"Context: {state.get_context_summary()}")
-
-# from __future__ import annotations
-
-# import uuid
-# from typing import Dict, List, Optional
-
-# from .state_schema import DialogueState, IntentType, Slot, Turn
-
-
-# class DialogueStateTracker:
-#     def __init__(self):
-#         self.sessions: Dict[str, DialogueState] = {}
-
-#     def create_session(self, user_id: Optional[str] = None) -> str:
-#         session_id = str(uuid.uuid4())
-#         self.sessions[session_id] = DialogueState(session_id=session_id, user_id=user_id)
-#         return session_id
-
-#     def get_state(self, session_id: str) -> Optional[DialogueState]:
-#         return self.sessions.get(session_id)
-
-#     def clear_session(self, session_id: str) -> None:
-#         self.sessions.pop(session_id, None)
-
-#     def get_active_sessions(self) -> List[str]:
-#         return list(self.sessions.keys())
-
-#     def update_state(
-#         self,
-#         session_id: str,
-#         user_utterance: str,
-#         intent: str,
-#         intent_confidence: float,
-#         slots: List[Dict],
-#     ) -> DialogueState:
-#         state = self.get_state(session_id)
-#         if not state:
-#             raise ValueError(f"Session {session_id} not found")
-
-#         intent_enum = self._to_intent(intent)
-
-#         slot_objects = [
-#             Slot(
-#                 type=str(s["type"]).upper(),
-#                 value=str(s["value"]).strip(),
-#                 confidence=float(s.get("confidence", 0.0)),
-#                 turn_index=len(state.turns),
-#             )
-#             for s in slots
-#             if s.get("type") and s.get("value")
-#         ]
-
-#         turn = Turn(
-#             turn_index=len(state.turns),
-#             user_utterance=user_utterance,
-#             intent=intent_enum,
-#             intent_confidence=float(intent_confidence),
-#             slots_extracted=slot_objects,
-#         )
-
-#         state.add_turn(turn)
-#         return state
-
-#     @staticmethod
-#     def _to_intent(intent: str) -> IntentType:
-#         normalized = str(intent).strip().upper()
-#         if normalized in IntentType.__members__:
-#             return IntentType[normalized]
-#         return IntentType.NO_CLEAR_INTENT
-
-
-# from __future__ import annotations
-
-# import logging
-# import uuid
-# from typing import Dict, List, Optional
-
-# from .state_schema import DialogueState, IntentType, Slot, Turn
-
-# logger = logging.getLogger(__name__)
-
-
-# class DialogueStateTracker:
-#     def __init__(self, debug: bool = False):
-#         self.sessions: Dict[str, DialogueState] = {}
-#         self.debug = debug
-
-#     def _dbg(self, msg: str, *args) -> None:
-#         if self.debug:
-#             logger.info("[DST] " + msg, *args)
-
-#     def create_session(self, user_id: Optional[str] = None) -> str:
-#         session_id = str(uuid.uuid4())
-#         self.sessions[session_id] = DialogueState(session_id=session_id, user_id=user_id)
-#         self._dbg("create_session user_id=%s -> session_id=%s", user_id, session_id)
-#         return session_id
-
-#     def get_state(self, session_id: str) -> Optional[DialogueState]:
-#         return self.sessions.get(session_id)
-
-#     def clear_session(self, session_id: str) -> None:
-#         self.sessions.pop(session_id, None)
-#         self._dbg("clear_session session_id=%s", session_id)
-
-#     def get_active_sessions(self) -> List[str]:
-#         return list(self.sessions.keys())
-
-#     def update_state(
-#         self,
-#         session_id: str,
-#         user_utterance: str,
-#         intent: str,
-#         intent_confidence: float,
-#         slots: List[Dict],
-#     ) -> DialogueState:
-#         state = self.get_state(session_id)
-#         if not state:
-#             raise ValueError(f"Session {session_id} not found")
-
-#         before_summary = state.get_context_summary()
-#         self._dbg(
-#             "update_state start session_id=%s turn=%d utterance=%r",
-#             session_id,
-#             len(state.turns),
-#             user_utterance,
-#         )
-#         self._dbg("before_state=%s", before_summary)
-
-#         intent_enum = self._to_intent(intent)
-#         self._dbg(
-#             "intent raw=%s -> enum=%s (confidence=%.4f)",
-#             intent,
-#             intent_enum.name,
-#             float(intent_confidence),
-#         )
-
-#         slot_objects = [
-#             Slot(
-#                 type=str(s["type"]).upper(),
-#                 value=str(s["value"]).strip(),
-#                 confidence=float(s.get("confidence", 0.0)),
-#                 turn_index=len(state.turns),
-#             )
-#             for s in slots
-#             if s.get("type") and s.get("value")
-#         ]
-#         self._dbg("slots_in=%s", slots)
-#         self._dbg(
-#             "slots_normalized=%s",
-#             [
-#                 {
-#                     "type": x.type,
-#                     "value": x.value,
-#                     "confidence": x.confidence,
-#                     "turn_index": x.turn_index,
-#                 }
-#                 for x in slot_objects
-#             ],
-#         )
-
-#         turn = Turn(
-#             turn_index=len(state.turns),
-#             user_utterance=user_utterance,
-#             intent=intent_enum,
-#             intent_confidence=float(intent_confidence),
-#             slots_extracted=slot_objects,
-#         )
-
-#         state.add_turn(turn)
-
-#         after_summary = state.get_context_summary()
-#         self._dbg("after_state=%s", after_summary)
-#         self._dbg(
-#             "filled_slots_delta before=%s -> after=%s",
-#             before_summary.get("filled_slots", {}),
-#             after_summary.get("filled_slots", {}),
-#         )
-
-#         return state
-
-#     @staticmethod
-#     def _to_intent(intent: str) -> IntentType:
-#         normalized = str(intent).strip().upper()
-#         if normalized in IntentType.__members__:
-#             return IntentType[normalized]
-#         return IntentType.NO_CLEAR_INTENT
 
 
 # ...existing code...
 from __future__ import annotations
-
+from .llm_context_analyzer import LLMContextAnalyzer
 import logging
 import uuid
 from typing import Any, Dict, List, Optional
@@ -361,14 +19,23 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 class DialogueStateTracker:
-    def __init__(self, debug: bool = False, enable_validator: bool = True):
+    def __init__(self, debug: bool = False, enable_validator: bool = True,enable_llm_analysis: bool = True,
+        llm_model_name: str = "Qwen/Qwen2.5-3B-Instruct",):
         self.sessions: Dict[str, DialogueState] = {}
         self.debug = debug
         self.enable_validator = enable_validator and SlotValidator is not None
         self.slot_validator = SlotValidator(debug=debug) if self.enable_validator else None
         self.intent_shift_detector = IntentShiftDetector()
         self.slot_ranker = SemanticSlotRanker()
-
+        self.enable_llm_analysis = enable_llm_analysis
+        self.llm_analyzer = None
+        if enable_llm_analysis:
+            try:
+                self.llm_analyzer = LLMContextAnalyzer(model_name=llm_model_name, device="auto")
+                self._dbg("llm_analyzer initialized")
+            except Exception as e:
+                self._dbg("failed to init llm_analyzer: %s", e)
+                self.enable_llm_analysis = False
     def _dbg(self, msg: str, *args: Any) -> None:
         if self.debug:
             logger.info("[DST] " + msg, *args)
@@ -407,8 +74,17 @@ class DialogueStateTracker:
 
         accepted_slots = self._validate_slots(slots, intent_enum, user_utterance, turn_index)
         self._dbg("accepted_slots=%s", [s.snapshot() for s in accepted_slots])
-
+        # ** NEW: LLM semantic filtering **
+        accepted_slots = self._llm_filter_slots(
+            user_utterance=user_utterance,
+            accepted_slots=accepted_slots,
+            current_intent=state.current_intent,
+            filled_slots={k: v.value for k, v in state.filled_slots.items()},
+        )
+        self._dbg("after_llm_filter accepted_slots=%s", [s.snapshot() for s in accepted_slots])
         # intent shift detector
+        self._dbg("update_state start session_id=%s turn=%d utterance=%r intent=%s", 
+                  session_id, turn_index, user_utterance, intent_enum.name)
         shift = self.intent_shift_detector.detect(
             user_text=user_utterance,
             current_intent=state.current_intent,
@@ -477,6 +153,75 @@ class DialogueStateTracker:
             after_summary.get("filled_slots", {}),
         )
         return state
+    def _llm_filter_slots(
+        self,
+        user_utterance: str,
+        accepted_slots: List[Slot],
+        current_intent: Optional[IntentType],
+        filled_slots: Dict[str, str],
+    ) -> List[Slot]:
+        """
+        Dùng LLM để lọc slots dựa trên semantic meaning.
+        
+        Ví dụ:
+        - User: "mình không muốn ăn phở nữa, muốn ăn thịt chó"
+        - Raw slots: [DISH=phở, DISH=thịt chó] (dedup -> phở)
+        - LLM analysis: phở is negative, thịt chó is positive
+        - Output: [DISH=thịt chó] (không phải phở)
+        """
+        if not self.enable_llm_analysis or not accepted_slots:
+            return accepted_slots
+
+        try:
+            # 1) Phân tích sentiment của slots
+            slot_sentiment = self.llm_analyzer.analyze_slot_sentiment(
+                user_utterance=user_utterance,
+                extracted_slots=[{"type": s.type, "value": s.value, "confidence": s.confidence} for s in accepted_slots],
+            )
+            
+            self._dbg(
+                "llm_slot_sentiment user=%r -> sentiment=%s",
+                user_utterance,
+                slot_sentiment.get("slot_sentiment", {}),
+            )
+            
+            # 2) Lọc slots: chỉ giữ positive ones, bỏ negative ones
+            filtered: List[Slot] = []
+            for slot in accepted_slots:
+                sentiment_map = slot_sentiment.get("slot_sentiment", {}).get(slot.type, {})
+                slot_sentiment_val = sentiment_map.get(slot.value, "neutral")
+                
+                if slot_sentiment_val == "negative":
+                    self._dbg("reject slot due sentiment type=%s value=%r sentiment=negative", 
+                             slot.type, slot.value)
+                    continue
+                
+                filtered.append(slot)
+                
+            # 3) Phân tích nếu nên reset state
+            reset_decision = self.llm_analyzer.should_reset_state(
+                user_utterance=user_utterance,
+                current_intent=current_intent.value if current_intent else None,
+                filled_slots=filled_slots,
+            )
+            
+            self._dbg(
+                "llm_reset_decision should_reset=%s reason=%s",
+                reset_decision.get("should_reset"),
+                reset_decision.get("reason"),
+            )
+            
+            # Store decision vào state context
+            current_state = self.get_state(list(self.sessions.keys())[-1]) if self.sessions else None
+            if current_state:
+                current_state.context["llm_reset_decision"] = reset_decision
+            
+            self._dbg("llm_filter result: %d -> %d slots", len(accepted_slots), len(filtered))
+            return filtered
+            
+        except Exception as e:
+            self._dbg("llm_filter error: %s, fallback to original slots", e)
+            return accepted_slots
     def _should_suppress_slots(self, intent_enum: IntentType, state: DialogueState) -> bool:
         if intent_enum in {IntentType.SMALL_TALK, IntentType.OUT_OF_SCOPE}:
             return True
