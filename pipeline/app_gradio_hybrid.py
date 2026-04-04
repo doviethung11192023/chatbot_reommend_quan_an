@@ -187,9 +187,17 @@ def build_orchestrator(args) -> DialogueOrchestrator:
     )
 
     rule_policy = RuleBasedPolicy()
-    ml_policy = SklearnMLPolicy(model_path=args.ml_model, debug=args.debug) if args.ml_model else None
-    llm_policy = HuggingFaceLLMPolicy(model_name=args.llm_model, debug=args.debug) if args.llm_model else None
+    # ml_policy = SklearnMLPolicy(model_path=args.ml_model, debug=args.debug) if args.ml_model else None
+    # llm_policy = HuggingFaceLLMPolicy(model_name=args.llm_model, debug=args.debug) if args.llm_model else None
+    ml_policy = SklearnMLPolicy(args.ml_policy_path) if args.ml_policy_path else None
 
+    llm_policy = None
+   
+    llm_policy = HuggingFaceLLMPolicy(
+            model_name=args.llm_model,
+            device=args.llm_device,
+            torch_dtype=args.llm_dtype,
+        )
     dst = DialogueStateTracker(debug=args.debug)
 
     policy = HybridPolicy(
