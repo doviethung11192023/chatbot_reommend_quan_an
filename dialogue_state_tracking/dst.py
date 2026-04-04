@@ -401,6 +401,10 @@ class DialogueStateTracker:
         turn_index = len(state.turns)
         before_summary = state.get_context_summary()
         intent_enum = self._to_intent(intent)
+        if self._should_suppress_slots(intent_enum, state):
+            self._dbg("suppress slots due intent=%s current_intent=%s", intent_enum.name, getattr(state.current_intent, "name", None))
+            slots = []
+
         accepted_slots = self._validate_slots(slots, intent_enum, user_utterance, turn_index)
         self._dbg("accepted_slots=%s", [s.snapshot() for s in accepted_slots])
 
@@ -473,7 +477,12 @@ class DialogueStateTracker:
             after_summary.get("filled_slots", {}),
         )
         return state
-
+    def _should_suppress_slots(self, intent_enum: IntentType, state: DialogueState) -> bool:
+        if intent_enum in {IntentType.SMALL_TALK, IntentType.OUT_OF_SCOPE}:
+            return True
+        if intent_enum == IntentType.NO_CLEAR_INTENT and state.current_intent is None:
+            return True
+        return False
     def _validate_slots(self, slots: List[Dict], intent_enum: IntentType, utterance: str, turn_index: int) -> List[Slot]:
         if not self.slot_validator:
             return [

@@ -4,7 +4,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol
-
+from pipeline.domain_gate import DomainGate, DomainGateDecision
 import torch
 from transformers import (
     AutoModelForSequenceClassification,
@@ -236,6 +236,7 @@ class DialogueOrchestrator:
         policy: Optional[Any] = None,
         intent_conf_threshold: float = 0.5,
         debug: bool = False,    
+        domain_gate: Optional[DomainGate] = None
     ):
         self.intent_model = intent_model
         self.slot_model = slot_model
@@ -243,6 +244,7 @@ class DialogueOrchestrator:
         self.policy = policy or RuleBasedPolicy()
         self.intent_conf_threshold = intent_conf_threshold
         self.debug = debug  # <-- added
+        self.domain_gate = domain_gate or DomainGate()
 
     def _dbg(self, msg: str, *args: Any) -> None:
         if self.debug:
@@ -390,14 +392,20 @@ class DialogueOrchestrator:
             raw_intent,
             confidence,
         )
-
+        gate = self.domain_gate.apply(
+            user_text=user_text,
+            predicted_intent=raw_intent,
+            current_intent=state_before.current_intent,
+        )
+        gated_intent = gate.intent
+        self._dbg("domain_gate intent=%s suppress_slots=%s reason=%s", gate.intent, gate.suppress_slots, gate.reason)
         # 2) Slot extraction
-        raw_slots = self.slot_model.extract_slots(user_text)
+        raw_slots = [] if gate.suppress_slots else self.slot_model.extract_slots(user_text)
         slots = self._normalize_slots(raw_slots)
         self._dbg("slots raw=%s normalized=%s", raw_slots, slots)
 
         # 3) Resolve intent with dialogue context
-        resolved_intent = self._resolve_intent(raw_intent, confidence, state_before, slots)
+        resolved_intent = self._resolve_intent(gated_intent, confidence, state_before, slots)
         self._dbg("resolved_intent=%s", resolved_intent)
 
         # 4) Update DST
@@ -491,6 +499,24 @@ class DialogueOrchestrator:
             out.append({"type": slot_type, "value": value, "confidence": conf})
         return out
 
+    # def _resolve_intent(
+    #     self,
+    #     predicted_intent: str,
+    #     confidence: float,
+    #     state_before: DialogueState,
+    #     slots: List[Dict[str, Any]],
+    # ) -> str:
+    #     if confidence < self.intent_conf_threshold and state_before.current_intent:
+    #         return state_before.current_intent.name
+
+    #     if (
+    #         state_before.current_intent in {IntentType.RECOMMEND_PLACE_NEARBY, IntentType.RECOMMEND_FOOD}
+    #         and predicted_intent in self.FOLLOWUP_INTENTS
+    #         and len(slots) > 0
+    #     ):
+    #         return state_before.current_intent.name
+
+    #     return predicted_intent
     def _resolve_intent(
         self,
         predicted_intent: str,
@@ -498,6 +524,12 @@ class DialogueOrchestrator:
         state_before: DialogueState,
         slots: List[Dict[str, Any]],
     ) -> str:
+        if predicted_intent in {"SMALL_TALK", "OUT_OF_SCOPE"}:
+            return predicted_intent
+
+        if predicted_intent == "NO_CLEAR_INTENT" and state_before.current_intent is None:
+            return predicted_intent
+
         if confidence < self.intent_conf_threshold and state_before.current_intent:
             return state_before.current_intent.name
 
