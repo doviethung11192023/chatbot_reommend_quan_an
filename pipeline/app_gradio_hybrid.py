@@ -174,12 +174,16 @@ logger = logging.getLogger(__name__)
 
 def build_orchestrator(args) -> DialogueOrchestrator:
     intent_classifier = IntentClassifierHF(
-        model_name=args.intent_model,
-        debug=args.debug,
+        # model_name=args.intent_model,
+        # debug=args.debug,
+        args.intent_model
+        ,device="cuda"
     )
     slot_extractor = SlotExtractorHF(
-        model_name=args.slot_model,
-        debug=args.debug,
+        # model_name=args.slot_model,
+        # debug=args.debug,
+        args.slot_model,
+        device="cuda"
     )
 
     rule_policy = RuleBasedPolicy()
