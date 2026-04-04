@@ -249,6 +249,8 @@ def main():
     parser.add_argument("--repeat-window", type=int, default=3)
     parser.add_argument("--state-quality-threshold", type=float, default=0.65)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--llm_device", default="auto", choices=["auto", "cuda", "cpu"])
+    parser.add_argument("--llm_dtype", default="auto", choices=["auto", "float16", "float32"])
     args = parser.parse_args()
 
     orchestrator = build_orchestrator(args)
