@@ -43,6 +43,41 @@ class SlotPredictor(Protocol):
         ...
 
 
+# @dataclass
+# class OrchestratorResult:
+#     session_id: str
+#     user_text: str
+#     intent_raw: str
+#     intent_resolved: str
+#     intent_confidence: float
+#     slots: List[Dict[str, Any]]
+#     action_type: str
+#     action_slot: Optional[str]
+#     action_template: str
+#     state_summary: Dict[str, Any]
+#     policy_log: Optional[Dict[str, Any]] = None
+
+#     def to_dict(self) -> Dict[str, Any]:
+#         out = {
+#             "session_id": self.session_id,
+#             "user_text": self.user_text,
+#             "intent": {
+#                 "raw": self.intent_raw,
+#                 "resolved": self.intent_resolved,
+#                 "confidence": self.intent_confidence,
+#             },
+#             "slots": self.slots,
+#             "action": {
+#                 "type": self.action_type,
+#                 "slot": self.action_slot,
+#                 "template": self.action_template,
+#             },
+#             "state": self.state_summary,
+#         }
+#         if self.policy_log is not None:
+#             out["policy"] = self.policy_log
+#         return out
+
 @dataclass
 class OrchestratorResult:
     session_id: str
@@ -55,6 +90,8 @@ class OrchestratorResult:
     action_slot: Optional[str]
     action_template: str
     state_summary: Dict[str, Any]
+    state_quality: Optional[float] = None
+    slot_conflicts: int = 0
     policy_log: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -73,12 +110,12 @@ class OrchestratorResult:
                 "template": self.action_template,
             },
             "state": self.state_summary,
+            "state_quality": self.state_quality,
+            "slot_conflicts": self.slot_conflicts,
         }
         if self.policy_log is not None:
             out["policy"] = self.policy_log
         return out
-
-
 class IntentClassifierHF:
     def __init__(self, model_path: str, device: Optional[str] = None):
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -260,6 +297,79 @@ class DialogueOrchestrator:
     #         policy_log=policy_log,
     #     )
     #     return result.to_dict()
+    # def process_user_message(self, session_id: str, user_text: str) -> Dict[str, Any]:
+    #     self._dbg("process_user_message(session_id=%s, user_text=%r)", session_id, user_text)
+
+    #     state_before = self.dst.get_state(session_id)
+    #     if state_before is None:
+    #         raise ValueError(f"Session {session_id} not found. Call create_session() first.")
+
+    #     self._dbg("state_before=%s", state_before.get_context_summary())
+
+    #     # 1) Intent prediction
+    #     intent_pred = self.intent_model.predict(user_text)
+    #     raw_label = intent_pred.get("intent", "NO_CLEAR_INTENT")
+    #     raw_intent = self._normalize_intent_label(raw_label)
+    #     confidence = float(intent_pred.get("confidence", 0.0))
+    #     self._dbg(
+    #         "intent_pred raw_label=%s normalized=%s confidence=%.4f",
+    #         raw_label,
+    #         raw_intent,
+    #         confidence,
+    #     )
+
+    #     # 2) Slot extraction
+    #     raw_slots = self.slot_model.extract_slots(user_text)
+    #     slots = self._normalize_slots(raw_slots)
+    #     self._dbg("slots raw=%s normalized=%s", raw_slots, slots)
+
+    #     # 3) Resolve intent with dialogue context
+    #     resolved_intent = self._resolve_intent(raw_intent, confidence, state_before, slots)
+    #     self._dbg("resolved_intent=%s", resolved_intent)
+
+    #     # 4) Update DST
+    #     state_after = self.dst.update_state(
+    #         session_id=session_id,
+    #         user_utterance=user_text,
+    #         intent=resolved_intent,
+    #         intent_confidence=confidence,
+    #         slots=slots,
+    #     )
+    #     self._dbg("state_after=%s", state_after.get_context_summary())
+
+    #     # 5) Policy decision
+    #     action = self.policy.decide_action(state_after)
+    #     state_after.turns[-1].bot_action = action.type
+    #     state_after.turns[-1].bot_response = action.template
+    #     self._dbg(
+    #         "policy_action type=%s slot=%s template=%r",
+    #         action.type,
+    #         action.slot,
+    #         action.template,
+    #     )
+
+    #     policy_log = None
+    #     if hasattr(self.policy, "get_last_decision_log"):
+    #         policy_log = self.policy.get_last_decision_log()
+    #         self._dbg("policy_log=%s", policy_log)
+
+    #     result = OrchestratorResult(
+    #         session_id=session_id,
+    #         user_text=user_text,
+    #         intent_raw=raw_intent,
+    #         intent_resolved=resolved_intent,
+    #         intent_confidence=confidence,
+    #         slots=slots,
+    #         action_type=action.type,
+    #         action_slot=action.slot,
+    #         action_template=action.template or "",
+    #         state_summary=state_after.get_context_summary(),
+    #         policy_log=policy_log,
+    #     )
+    #     out = result.to_dict()
+    #     self._dbg("result=%s", out)
+    #     return out
+
     def process_user_message(self, session_id: str, user_text: str) -> Dict[str, Any]:
         self._dbg("process_user_message(session_id=%s, user_text=%r)", session_id, user_text)
 
@@ -316,6 +426,24 @@ class DialogueOrchestrator:
             policy_log = self.policy.get_last_decision_log()
             self._dbg("policy_log=%s", policy_log)
 
+        state_quality = None
+        if hasattr(state_after, "get_state_quality"):
+            try:
+                state_quality = float(state_after.get_state_quality())
+            except Exception:
+                state_quality = None
+        else:
+            state_quality = state_after.context.get("state_quality") if hasattr(state_after, "context") else None
+
+        slot_conflicts = 0
+        if hasattr(state_after, "slot_conflicts"):
+            try:
+                slot_conflicts = len(state_after.slot_conflicts)
+            except Exception:
+                slot_conflicts = 0
+        elif hasattr(state_after, "context") and isinstance(state_after.context, dict):
+            slot_conflicts = int(state_after.context.get("slot_conflicts", 0) or 0)
+
         result = OrchestratorResult(
             session_id=session_id,
             user_text=user_text,
@@ -327,6 +455,8 @@ class DialogueOrchestrator:
             action_slot=action.slot,
             action_template=action.template or "",
             state_summary=state_after.get_context_summary(),
+            state_quality=state_quality,
+            slot_conflicts=slot_conflicts,
             policy_log=policy_log,
         )
         out = result.to_dict()

@@ -259,6 +259,7 @@ class HybridPolicy:
         debug: bool = False,
         repeat_window: int = 3,
         allow_ml_llm_escape: bool = True,
+        state_quality_threshold: float = 0.65,
     ):
         self.rule_policy = rule_policy or RuleBasedPolicy()
         self.ml_policy = ml_policy
@@ -269,43 +270,90 @@ class HybridPolicy:
         self.debug = debug
         self.repeat_window = repeat_window
         self.allow_ml_llm_escape = allow_ml_llm_escape
+        self.state_quality_threshold = state_quality_threshold
         self._last_log = PolicyDecisionLog(source="FALLBACK", action="FALLBACK")
 
     def _dbg(self, msg: str, *args: Any) -> None:
         if self.debug:
             logger.info("[HybridPolicy] " + msg, *args)
 
+    # def decide_action(self, state: DialogueState) -> Action:
+       
+    #     rule = self._select_best_rule(state)
+    #     rule_action = self._build_action_from_rule(rule, state) if rule else None
+
+    #     # Nếu rule bị lặp ASK_SLOT/CLARIFY nhiều lần thì mở đường cho ML/LLM
+    #     if rule_action and self._is_repetitive_prompt(state, rule_action.type) and self.allow_ml_llm_escape:
+    #         self._dbg("rule repetitive detected -> try ML/LLM escape")
+    #         ml_action = self._try_ml(state)
+    #         if ml_action:
+    #             return ml_action
+    #         llm_action = self._try_llm(state)
+    #         if llm_action:
+    #             return llm_action
+
+    #     # Rule vẫn là safe default
+    #     if rule_action:
+    #         self._last_log = PolicyDecisionLog(source="RULE", action=self._normalize_action(rule_action.type), confidence=1.0)
+    #         self._dbg("selected RULE action=%s", rule_action)
+    #         return rule_action
+
+    #     ml_action = self._try_ml(state)
+    #     if ml_action:
+    #         return ml_action
+
+    #     llm_action = self._try_llm(state)
+    #     if llm_action:
+    #         return llm_action
+
+    #     self._last_log = PolicyDecisionLog(source="FALLBACK", action="FALLBACK")
+    #     return self._build_action("FALLBACK", state)
     def decide_action(self, state: DialogueState) -> Action:
+        quality = getattr(state, "get_state_quality", lambda: 1.0)()
+        self._dbg(
+            "decide_action state_quality=%.4f complete=%s missing=%s intent=%s",
+            quality,
+            state.is_complete(),
+            state.get_missing_slots(),
+            state.current_intent.value if state.current_intent else None,
+        )
+
         rule = self._select_best_rule(state)
         rule_action = self._build_action_from_rule(rule, state) if rule else None
 
-        # Nếu rule bị lặp ASK_SLOT/CLARIFY nhiều lần thì mở đường cho ML/LLM
         if rule_action and self._is_repetitive_prompt(state, rule_action.type) and self.allow_ml_llm_escape:
             self._dbg("rule repetitive detected -> try ML/LLM escape")
-            ml_action = self._try_ml(state)
-            if ml_action:
-                return ml_action
-            llm_action = self._try_llm(state)
-            if llm_action:
-                return llm_action
+            escaped = self._try_ml(state) or self._try_llm(state)
+            if escaped:
+                return self._apply_state_quality_guard(state, escaped)
 
-        # Rule vẫn là safe default
         if rule_action:
             self._last_log = PolicyDecisionLog(source="RULE", action=self._normalize_action(rule_action.type), confidence=1.0)
-            self._dbg("selected RULE action=%s", rule_action)
-            return rule_action
+            return self._apply_state_quality_guard(state, rule_action)
 
         ml_action = self._try_ml(state)
         if ml_action:
-            return ml_action
+            return self._apply_state_quality_guard(state, ml_action)
 
         llm_action = self._try_llm(state)
         if llm_action:
-            return llm_action
+            return self._apply_state_quality_guard(state, llm_action)
 
         self._last_log = PolicyDecisionLog(source="FALLBACK", action="FALLBACK")
         return self._build_action("FALLBACK", state)
+    
+    def _apply_state_quality_guard(self, state: DialogueState, action: Action) -> Action:
+        quality = getattr(state, "get_state_quality", lambda: 1.0)()
+        if quality < self.state_quality_threshold and action.type == "RECOMMEND":
+            self._dbg("downgrade RECOMMEND -> CLARIFY due low state quality=%.4f", quality)
+            return self._build_action("CLARIFY", state)
 
+        if quality < self.state_quality_threshold and action.type == "ASK_SLOT" and not state.get_missing_slots():
+            self._dbg("downgrade ASK_SLOT -> CLARIFY due low state quality=%.4f", quality)
+            return self._build_action("CLARIFY", state)
+
+        return action
+    
     def _select_best_rule(self, state: DialogueState) -> Optional[Dict[str, Any]]:
         matched: List[Dict[str, Any]] = []
         for idx, rule in enumerate(getattr(self.rule_policy, "rules", [])):
