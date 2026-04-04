@@ -212,12 +212,13 @@ def build_orchestrator(args) -> DialogueOrchestrator:
     )
 
     orchestrator = DialogueOrchestrator(
-        intent_classifier=intent_classifier,
-        slot_extractor=slot_extractor,
+        intent_model=intent_classifier,
+        slot_model=slot_extractor,
         dst=dst,
         policy=policy,
-        debug=args.debug,
+        debug=True,
     )
+
     return orchestrator
 
 
