@@ -344,161 +344,221 @@
 
 
 # ...existing code...
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum
+from __future__ import annotations
+
+import logging
+import uuid
 from typing import Any, Dict, List, Optional
 
-class IntentType(Enum):
-    ASK_DIRECTION = "ASK_DIRECTION"
-    ASK_FOOD_TYPE = "ASK_FOOD_TYPE"
-    ASK_LOCATION = "ASK_LOCATION"
-    ASK_OPEN_TIME = "ASK_OPEN_TIME"
-    ASK_PRICE = "ASK_PRICE"
-    ASK_REVIEW = "ASK_REVIEW"
-    COMPARE_PLACES = "COMPARE_PLACES"
-    NO_CLEAR_INTENT = "NO_CLEAR_INTENT"
-    OUT_OF_SCOPE = "OUT_OF_SCOPE"
-    RECOMMEND_FOOD = "RECOMMEND_FOOD"
-    RECOMMEND_PLACE_NEARBY = "RECOMMEND_PLACE_NEARBY"
-    SMALL_TALK = "SMALL_TALK"
+from .state_schema import DialogueState, IntentType, Slot, Turn
 
-EPHEMERAL_INTENTS = {IntentType.SMALL_TALK, IntentType.NO_CLEAR_INTENT}
+try:
+    from .slot_guard import SlotValidator
+except Exception:
+    SlotValidator = None
 
-RESET_CUE_PATTERNS = (
-    "thôi",
-    "đổi",
-    "món khác",
-    "quán khác",
-    "không muốn",
-    "bỏ qua",
-)
+logger = logging.getLogger(__name__)
 
-@dataclass
-class Slot:
-    type: str
-    value: str
-    confidence: float
-    turn_index: int
-    source_intent: Optional[IntentType] = None
-    source_utterance: Optional[str] = None
-    is_confirmed: bool = False
-    history: List[Dict[str, Any]] = field(default_factory=list)
+class DialogueStateTracker:
+    def __init__(self, debug: bool = False, enable_validator: bool = True):
+        self.sessions: Dict[str, DialogueState] = {}
+        self.debug = debug
+        self.enable_validator = enable_validator and SlotValidator is not None
+        self.slot_validator = SlotValidator(debug=debug) if self.enable_validator else None
 
-    def snapshot(self) -> Dict[str, Any]:
+    def _dbg(self, msg: str, *args: Any) -> None:
+        if self.debug:
+            logger.info("[DST] " + msg, *args)
+
+    def create_session(self, user_id: Optional[str] = None) -> str:
+        session_id = str(uuid.uuid4())
+        self.sessions[session_id] = DialogueState(session_id=session_id, user_id=user_id)
+        self._dbg("create_session user_id=%s -> session_id=%s", user_id, session_id)
+        return session_id
+
+    def get_state(self, session_id: str) -> Optional[DialogueState]:
+        return self.sessions.get(session_id)
+
+    def clear_session(self, session_id: str) -> None:
+        self.sessions.pop(session_id, None)
+        self._dbg("clear_session session_id=%s", session_id)
+
+    def update_state(
+        self,
+        session_id: str,
+        user_utterance: str,
+        intent: str,
+        intent_confidence: float,
+        slots: List[Dict],
+    ) -> DialogueState:
+        state = self.get_state(session_id)
+        if not state:
+            raise ValueError(f"Session {session_id} not found")
+
+        turn_index = len(state.turns)
+        before_summary = state.get_context_summary()
+        intent_enum = self._to_intent(intent)
+
+        self._dbg(
+            "update_state start session_id=%s turn=%d utterance=%r intent=%s",
+            session_id, turn_index, user_utterance, intent_enum.name
+        )
+        self._dbg("before_state=%s", before_summary)
+        self._dbg("slots_raw=%s", slots)
+
+        # 1) Validator: guardrail cuối trước khi commit state
+        accepted_slots = self._validate_slots(slots, intent_enum, user_utterance, turn_index)
+        self._dbg("accepted_slots=%s", [s.snapshot() for s in accepted_slots])
+
+        # 2) Intent shift / reset
+        shift_log = self._maybe_reset_on_intent_shift(state, intent_enum, user_utterance)
+        if shift_log:
+            self._dbg("intent_shift_reset=%s", shift_log)
+
+        # 3) Semantic merge
+        merged_slots, merge_logs = self._semantic_merge(state, accepted_slots)
+        self._dbg("merge_logs=%s", merge_logs)
+
+        # 4) Commit turn
+        turn = Turn(
+            turn_index=turn_index,
+            user_utterance=user_utterance,
+            intent=intent_enum,
+            intent_confidence=float(intent_confidence),
+            slots_extracted=accepted_slots,
+        )
+        state.add_turn(turn, merge_slots=False)
+        state.filled_slots = merged_slots
+        state.context["state_quality"] = state.get_state_quality()
+        state.context["last_merge_logs"] = merge_logs[-10:]
+        state.context["last_shift_log"] = shift_log
+
+        after_summary = state.get_context_summary()
+        self._dbg("after_state=%s", after_summary)
+        self._dbg(
+            "filled_slots_delta before=%s -> after=%s",
+            before_summary.get("filled_slots", {}),
+            after_summary.get("filled_slots", {}),
+        )
+        return state
+
+    def _validate_slots(self, slots: List[Dict], intent_enum: IntentType, utterance: str, turn_index: int) -> List[Slot]:
+        if not self.slot_validator:
+            return [
+                Slot(
+                    type=str(s["type"]).upper(),
+                    value=str(s["value"]).strip(),
+                    confidence=float(s.get("confidence", 0.0)),
+                    turn_index=turn_index,
+                    source_intent=intent_enum,
+                    source_utterance=utterance,
+                )
+                for s in slots
+                if s.get("type") and s.get("value")
+            ]
+
+        result = self.slot_validator.validate(slots)
+        return [
+            Slot(
+                type=s.type,
+                value=s.value,
+                confidence=s.confidence,
+                turn_index=turn_index,
+                source_intent=intent_enum,
+                source_utterance=utterance,
+            )
+            for s in result.accepted
+        ]
+
+    def _maybe_reset_on_intent_shift(
+        self,
+        state: DialogueState,
+        new_intent: IntentType,
+        utterance: str,
+    ) -> Optional[Dict[str, Any]]:
+        current = state.current_intent
+        text = utterance.lower()
+
+        reset_cues = ("thôi", "đổi", "món khác", "quán khác", "không muốn", "bỏ qua")
+        has_reset_cue = any(cue in text for cue in reset_cues)
+        intent_changed = current is not None and new_intent != current
+
+        if not has_reset_cue and not intent_changed:
+            return None
+
+        preserve: List[str] = []
+        if new_intent == IntentType.RECOMMEND_FOOD:
+            preserve = ["LOCATION"]
+        elif new_intent == IntentType.RECOMMEND_PLACE_NEARBY:
+            preserve = ["DISH"]
+
+        removed = state.reset_slots(preserve=preserve if has_reset_cue or intent_changed else [], reason="intent_shift_reset")
+        if current != new_intent:
+            state.current_intent = new_intent
+
         return {
-            "type": self.type,
-            "value": self.value,
-            "confidence": self.confidence,
-            "turn_index": self.turn_index,
-            "source_intent": self.source_intent.value if self.source_intent else None,
-            "source_utterance": self.source_utterance,
-            "is_confirmed": self.is_confirmed,
+            "current_intent": current.value if current else None,
+            "new_intent": new_intent.value,
+            "has_reset_cue": has_reset_cue,
+            "preserve": preserve,
+            "removed": {k: v.snapshot() for k, v in removed.items()},
         }
 
-@dataclass
-class Turn:
-    turn_index: int
-    user_utterance: str
-    intent: IntentType
-    intent_confidence: float
-    slots_extracted: List[Slot]
-    bot_response: Optional[str] = None
-    bot_action: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.now)
+    def _semantic_merge(self, state: DialogueState, new_slots: List[Slot]) -> tuple[Dict[str, Slot], List[Dict[str, Any]]]:
+        merged = dict(state.filled_slots)
+        logs: List[Dict[str, Any]] = []
 
-@dataclass
-class DialogueState:
-    session_id: str
-    user_id: Optional[str] = None
-    turns: List[Turn] = field(default_factory=list)
-    filled_slots: Dict[str, Slot] = field(default_factory=dict)
-    current_intent: Optional[IntentType] = None
-    context: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-    slot_conflicts: List[Dict[str, Any]] = field(default_factory=list)
+        for slot in new_slots:
+            prev = merged.get(slot.type)
+            if prev is None:
+                merged[slot.type] = slot
+                logs.append({"type": slot.type, "action": "add", "value": slot.value, "confidence": slot.confidence})
+                continue
 
-    def get_required_slots(self) -> List[str]:
-        required_slots_map = {
-            IntentType.RECOMMEND_PLACE_NEARBY: ["LOCATION"],
-            IntentType.RECOMMEND_FOOD: ["DISH"],
-            IntentType.ASK_PRICE: ["DISH"],
-            IntentType.ASK_OPEN_TIME: ["LOCATION"],
-        }
-        return required_slots_map.get(self.current_intent, [])
+            replace, reason = self._should_replace(prev, slot, state.current_intent)
+            if replace:
+                slot.history = list(prev.history) + [prev.snapshot()]
+                merged[slot.type] = slot
+                logs.append({
+                    "type": slot.type,
+                    "action": "replace",
+                    "reason": reason,
+                    "old": prev.snapshot(),
+                    "new": slot.snapshot(),
+                })
+                state.record_conflict(slot.type, prev, slot, reason)
+            else:
+                logs.append({
+                    "type": slot.type,
+                    "action": "keep",
+                    "reason": reason,
+                    "old": prev.snapshot(),
+                    "new": slot.snapshot(),
+                })
 
-    def get_missing_slots(self) -> List[str]:
-        required = set(self.get_required_slots())
-        filled = set(self.filled_slots.keys())
-        return sorted(list(required - filled))
+        return merged, logs
 
-    def is_complete(self) -> bool:
-        return len(self.get_missing_slots()) == 0
+    def _should_replace(self, old: Slot, new: Slot, current_intent: Optional[IntentType]) -> tuple[bool, str]:
+        if old.value.strip().lower() == new.value.strip().lower():
+            return False, "same_value"
 
-    def reset_slots(self, preserve: Optional[List[str]] = None, reason: str = "") -> Dict[str, Slot]:
-        preserve_set = set(preserve or [])
-        removed: Dict[str, Slot] = {}
-        for key in list(self.filled_slots.keys()):
-            if key not in preserve_set:
-                removed[key] = self.filled_slots.pop(key)
-        if reason:
-            self.context.setdefault("reset_log", []).append({
-                "reason": reason,
-                "preserve": sorted(list(preserve_set)),
-                "removed": {k: v.snapshot() for k, v in removed.items()},
-                "timestamp": datetime.now().isoformat(),
-            })
-        return removed
+        if new.confidence >= old.confidence + 0.08:
+            return True, "higher_confidence"
 
-    def record_conflict(self, slot_type: str, old_slot: Slot, new_slot: Slot, reason: str) -> None:
-        self.slot_conflicts.append({
-            "slot_type": slot_type,
-            "old": old_slot.snapshot(),
-            "new": new_slot.snapshot(),
-            "reason": reason,
-            "timestamp": datetime.now().isoformat(),
-        })
+        junk_values = {"cảm ơn", "cho tôi", "giúp tôi", "giúp mình", "hay", "ok", "okay"}
+        if old.value.strip().lower() in junk_values and new.value.strip().lower() not in junk_values:
+            return True, "replace_junk"
 
-    def get_state_quality(self) -> float:
-        if not self.filled_slots and not self.get_required_slots():
-            return 1.0
-        if not self.filled_slots:
-            return 0.0
+        # cùng intent recommend nhưng user đổi món rõ ràng
+        if current_intent in {IntentType.RECOMMEND_FOOD, IntentType.RECOMMEND_PLACE_NEARBY}:
+            if new.confidence >= old.confidence:
+                return True, "intent_sensitive_update"
 
-        score = 1.0
-        low_conf = sum(1 for s in self.filled_slots.values() if s.confidence < 0.70)
-        unconfirmed = sum(1 for s in self.filled_slots.values() if not s.is_confirmed)
-        conflicts = len(self.slot_conflicts)
+        return False, "lower_confidence_or_ambiguous"
 
-        score -= 0.12 * low_conf
-        score -= 0.08 * unconfirmed
-        score -= 0.10 * conflicts
-
-        return max(0.0, min(1.0, score))
-
-    def add_turn(self, turn: Turn, merge_slots: bool = True) -> None:
-        self.turns.append(turn)
-        self.updated_at = datetime.now()
-
-        if turn.intent not in EPHEMERAL_INTENTS:
-            self.current_intent = turn.intent
-
-        if merge_slots:
-            for slot in turn.slots_extracted:
-                prev = self.filled_slots.get(slot.type)
-                if prev is None or slot.confidence >= prev.confidence:
-                    self.filled_slots[slot.type] = slot
-
-    def get_context_summary(self) -> Dict[str, Any]:
-        return {
-            "session_id": self.session_id,
-            "current_intent": self.current_intent.value if self.current_intent else None,
-            "turn_count": len(self.turns),
-            "filled_slots": {k: v.value for k, v in self.filled_slots.items()},
-            "missing_slots": self.get_missing_slots(),
-            "is_complete": self.is_complete(),
-            "state_quality": self.get_state_quality(),
-            "slot_conflicts": len(self.slot_conflicts),
-            "last_utterance": self.turns[-1].user_utterance if self.turns else None,
-        }
+    @staticmethod
+    def _to_intent(intent: str) -> IntentType:
+        normalized = str(intent).strip().upper()
+        if normalized in IntentType.__members__:
+            return IntentType[normalized]
+        return IntentType.NO_CLEAR_INTENT
