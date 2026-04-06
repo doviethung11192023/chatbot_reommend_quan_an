@@ -28,6 +28,20 @@ class IntentShiftDetector:
     NEGATIVE_SHORT = {"không", "no", "khong"}
 
     VAGUE_LOCATION = {"gần đây", "nearby", "around here"}
+    CHANGE_CUES = [
+        "đổi món",
+        "doi mon",
+        "món khác",
+        "mon khac",
+        "đổi quán",
+        "doi quan",
+        "quán khác",
+        "quan khac",
+        "đổi sang",
+        "doi sang",
+        "ăn món khác",
+        "an mon khac",
+    ]
 
     def detect(
         self,
@@ -39,26 +53,30 @@ class IntentShiftDetector:
         text = (user_text or "").strip().lower()
         d = IntentShiftDecision()
 
+        is_cancel = any(re.search(p, text) for p in self.CANCEL_PATTERNS)
+        is_goodbye = any(re.search(p, text) for p in self.GOODBYE_PATTERNS)
+        has_change_cue = any(phrase in text for phrase in self.CHANGE_CUES)
+        if not has_change_cue and current_intent in {IntentType.RECOMMEND_FOOD, IntentType.RECOMMEND_PLACE_NEARBY}:
+            if re.search(r"\bthôi\b.*\bmuốn\s*ăn\b", text):
+                has_change_cue = True
+
         # Explicit preference change should not be treated as cancel.
-        has_change_cue = any(
-            phrase in text
-            for phrase in ["muốn ăn", "muon an", "đổi món", "doi mon", "món khác", "mon khac", "quán khác", "quan khac"]
-        )
-        if has_change_cue and accepted_slots:
+        if not is_cancel and not is_goodbye and has_change_cue:
             d.dialogue_act = "CHANGE"
-            d.block_recommend = False
+            d.block_recommend = not bool(accepted_slots)
             d.note = "change_preference"
             if current_intent in {IntentType.RECOMMEND_FOOD, IntentType.RECOMMEND_PLACE_NEARBY}:
                 d.override_intent = current_intent
-            d.force_replace_slots.extend(
-                sorted(
-                    {
-                        str(s.get("type", "")).upper().strip()
-                        for s in accepted_slots
-                        if s.get("type")
-                    }
-                )
-            )
+            target_slots = {
+                str(s.get("type", "")).upper().strip()
+                for s in accepted_slots
+                if s.get("type")
+            }
+            if not target_slots and current_intent == IntentType.RECOMMEND_FOOD:
+                target_slots.add("DISH")
+            if not target_slots and current_intent == IntentType.RECOMMEND_PLACE_NEARBY:
+                target_slots.add("LOCATION")
+            d.force_replace_slots.extend(sorted(target_slots))
             return d
 
         # Keep terse stop messages as cancel, but avoid matching trailing polite '... thôi'.
@@ -70,7 +88,7 @@ class IntentShiftDetector:
             d.note = "cancel_short"
             return d
 
-        if any(re.search(p, text) for p in self.CANCEL_PATTERNS):
+        if is_cancel:
             d.override_intent = IntentType.NO_CLEAR_INTENT
             d.dialogue_act = "CANCEL"
             d.reset_mode = "hard"
@@ -78,7 +96,7 @@ class IntentShiftDetector:
             d.note = "cancel_cue"
             return d
 
-        if any(re.search(p, text) for p in self.GOODBYE_PATTERNS):
+        if is_goodbye:
             d.override_intent = IntentType.NO_CLEAR_INTENT
             d.dialogue_act = "GOODBYE"
             d.reset_mode = "soft"

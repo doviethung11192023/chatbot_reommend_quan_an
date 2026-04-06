@@ -15,6 +15,26 @@ class DomainGateDecision:
 
 
 class DomainGate:
+    CANCEL_PATTERNS = [
+        r"\b(không muốn ăn nữa|không ăn nữa|dừng lại|bỏ qua|hủy|cancel|stop)\b",
+    ]
+    GOODBYE_PATTERNS = [
+        r"\b(tạm biệt|bye|goodbye|hẹn gặp lại)\b",
+    ]
+    CHANGE_CUES = [
+        "đổi món",
+        "doi mon",
+        "món khác",
+        "mon khac",
+        "đổi quán",
+        "doi quan",
+        "quán khác",
+        "quan khac",
+        "đổi sang",
+        "doi sang",
+        "ăn món khác",
+        "an mon khac",
+    ]
     SMALL_TALK_PATTERNS = [
         r"\b(hello|hi|xin chào|chào|hey)\b",
         r"\b(cảm ơn|thank you|thanks)\b",
@@ -40,6 +60,17 @@ class DomainGate:
     ) -> DomainGateDecision:
         text = (user_text or "").strip().lower()
         intent = str(predicted_intent or "NO_CLEAR_INTENT").strip().upper()
+
+        has_change_cue = any(phrase in text for phrase in self.CHANGE_CUES)
+        if not has_change_cue and current_intent in {IntentType.RECOMMEND_FOOD, IntentType.RECOMMEND_PLACE_NEARBY}:
+            if re.search(r"\bthôi\b.*\bmuốn\s*ăn\b", text):
+                has_change_cue = True
+
+        if not has_change_cue and self._matches_any(text, self.CANCEL_PATTERNS):
+            return DomainGateDecision(intent="NO_CLEAR_INTENT", suppress_slots=True, reason="cancel_pattern")
+
+        if not has_change_cue and self._matches_any(text, self.GOODBYE_PATTERNS):
+            return DomainGateDecision(intent="NO_CLEAR_INTENT", suppress_slots=True, reason="goodbye_pattern")
 
         if self._matches_any(text, self.SMALL_TALK_PATTERNS):
             return DomainGateDecision(intent="SMALL_TALK", suppress_slots=True, reason="small_talk_pattern")

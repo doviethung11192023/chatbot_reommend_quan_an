@@ -21,7 +21,7 @@ class HuggingFaceLLMPolicy:
         model_name: str = "Qwen/Qwen2.5-7B-Instruct",
         device: str = "auto",  # "auto" | "cuda" | "cpu"
         torch_dtype: str = "auto",  # "auto" | "float16" | "float32"
-        max_new_tokens: int = 12,
+        max_new_tokens: int = 64,
         temperature: float = 0.0,
         top_p: float = 0.9,
     ):

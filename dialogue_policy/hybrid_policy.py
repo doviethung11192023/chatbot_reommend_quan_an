@@ -44,6 +44,18 @@ DEFAULT_TEMPLATES: Dict[str, List[str]] = {
         "Chào bạn! Mình có thể giúp bạn tìm quán ăn ngon nè 😊",
         "Mình đây, bạn muốn tìm món gì hôm nay?",
     ],
+    "CANCEL": [
+        "Ok bạn nhé, khi nào cần tìm quán thì nhắn mình bất cứ lúc nào 👌",
+        "Được rồi, khi nào cần bạn cứ nhắn mình nhé.",
+    ],
+    "GOODBYE": [
+        "Chào bạn, hẹn gặp lại nhé! 👋",
+        "Tạm biệt bạn, chúc bạn một ngày vui vẻ!",
+    ],
+    "CHANGE": [
+        "Ok, bạn muốn đổi sang món nào?",
+        "Bạn muốn đổi sang món gì để mình gợi ý?",
+    ],
     "FALLBACK": [
         "Xin lỗi, mình chưa hiểu rõ. Bạn có thể nói lại giúp mình không?",
         "Mình chưa bắt đúng ý, bạn diễn đạt lại ngắn hơn giúp mình nhé.",
@@ -110,8 +122,15 @@ class HybridPolicy:
     def decide_action(self, state: DialogueState) -> Action:
         dialogue_act = str(getattr(state, "context", {}).get("dialogue_act", "") or "").upper()
         if dialogue_act in {"CANCEL", "GOODBYE"}:
+            state.context.pop("policy_plan", None)
             self._last_log = PolicyDecisionLog(source="RULE", action="RESPOND", confidence=1.0, note=f"dialogue_act={dialogue_act}")
-            return self._build_action("RESPOND", state)
+            return self._build_dialogue_act_response(dialogue_act, state)
+
+        if dialogue_act == "CHANGE":
+            state.context.pop("policy_plan", None)
+            action = self._build_change_action(state)
+            self._last_log = PolicyDecisionLog(source="RULE", action=action.type, confidence=1.0, note="dialogue_act=CHANGE")
+            return action
 
         if bool(getattr(state, "context", {}).get("block_recommend", False)):
             self._dbg("block_recommend=True -> suppress direct recommend")
@@ -148,9 +167,15 @@ class HybridPolicy:
     def _apply_state_quality_guard(self, state: DialogueState, action: Action) -> Action:
         quality = getattr(state, "get_state_quality", lambda: 1.0)()
         block_recommend = bool(getattr(state, "context", {}).get("block_recommend", False))
+        missing_slots = state.get_missing_slots()
+        recommend_intent = state.current_intent in {IntentType.RECOMMEND_FOOD, IntentType.RECOMMEND_PLACE_NEARBY}
 
-        if action.type == "RECOMMEND" and state.get_missing_slots():
-            self._dbg("downgrade RECOMMEND -> ASK_SLOT due missing_slots=%s", state.get_missing_slots())
+        if action.type == "RECOMMEND" and missing_slots:
+            self._dbg("downgrade RECOMMEND -> ASK_SLOT due missing_slots=%s", missing_slots)
+            return self._build_action("ASK_SLOT", state)
+
+        if missing_slots and recommend_intent and action.type not in {"ASK_SLOT", "CLARIFY"}:
+            self._dbg("force ASK_SLOT due missing_slots=%s action=%s", missing_slots, action.type)
             return self._build_action("ASK_SLOT", state)
 
         if block_recommend and action.type == "RECOMMEND":
@@ -166,6 +191,39 @@ class HybridPolicy:
             return self._build_action("CLARIFY", state)
 
         return action
+
+    def _build_dialogue_act_response(self, dialogue_act: str, state: DialogueState) -> Action:
+        if dialogue_act == "GOODBYE":
+            templates = self.templates.get("GOODBYE", DEFAULT_TEMPLATES["GOODBYE"])
+        elif dialogue_act == "CANCEL":
+            templates = self.templates.get("CANCEL", DEFAULT_TEMPLATES["CANCEL"])
+        else:
+            templates = self.templates.get("RESPOND", DEFAULT_TEMPLATES["RESPOND"])
+        template = self._pick_non_repeated_template(templates, state)
+        return Action(action_type="RESPOND", slot=None, template=template)
+
+    def _build_change_action(self, state: DialogueState) -> Action:
+        missing = state.get_missing_slots()
+        if missing:
+            slot = self._choose_target_slot(state)
+            template = self._build_change_prompt(slot, state)
+            return Action(action_type="ASK_SLOT", slot=slot, template=template)
+
+        templates = self._get_templates_for_action("RECOMMEND", None)
+        template = self._pick_non_repeated_template(templates, state)
+        return Action(action_type="RECOMMEND", slot=None, template=template)
+
+    def _build_change_prompt(self, slot: Optional[str], state: DialogueState) -> str:
+        if slot == "DISH":
+            templates = self.templates.get("CHANGE", DEFAULT_TEMPLATES["CHANGE"])
+            return self._pick_non_repeated_template(templates, state)
+        if slot == "LOCATION":
+            templates = [
+                "Ok, bạn muốn đổi sang khu vực nào?",
+                "Bạn muốn đổi địa điểm sang khu vực nào để mình gợi ý?",
+            ]
+            return self._pick_non_repeated_template(templates, state)
+        return "Ok, bạn muốn đổi thông tin nào để mình cập nhật?"
 
     def _select_best_rule(self, state: DialogueState) -> tuple[Optional[Dict[str, Any]], int]:
         matched: List[Dict[str, Any]] = []

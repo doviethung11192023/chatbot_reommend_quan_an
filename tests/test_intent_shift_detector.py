@@ -18,7 +18,7 @@ def test_trailing_thoi_is_not_cancel():
 def test_change_preference_not_cancel_and_force_replace():
     detector = IntentShiftDetector()
     decision = detector.detect(
-        user_text="thoi gio minh muon an thit cho",
+        user_text="thoi gio minh doi mon khac an thit cho",
         current_intent=IntentType.RECOMMEND_FOOD,
         predicted_intent=IntentType.RECOMMEND_FOOD,
         accepted_slots=[{"type": "DISH", "value": "thit cho", "confidence": 0.99}],
@@ -28,3 +28,18 @@ def test_change_preference_not_cancel_and_force_replace():
     assert decision.override_intent == IntentType.RECOMMEND_FOOD
     assert "DISH" in decision.force_replace_slots
     assert decision.block_recommend is False
+
+
+def test_change_cue_without_slots_blocks_recommend_and_targets_dish():
+    detector = IntentShiftDetector()
+    decision = detector.detect(
+        user_text="thoi minh doi mon khac",
+        current_intent=IntentType.RECOMMEND_FOOD,
+        predicted_intent=IntentType.RECOMMEND_FOOD,
+        accepted_slots=[],
+    )
+
+    assert decision.dialogue_act == "CHANGE"
+    assert decision.override_intent == IntentType.RECOMMEND_FOOD
+    assert "DISH" in decision.force_replace_slots
+    assert decision.block_recommend is True

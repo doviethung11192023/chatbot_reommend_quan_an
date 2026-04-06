@@ -129,13 +129,29 @@ class SlotValidator:
         v = re.sub(r"\s+", " ", v)
 
         # bỏ hậu tố lịch sự
-        v = re.sub(r"\s+(cho tôi|giúp tôi|giúp mình|nha|nhé|được không)$", "", v).strip()
+        v = re.sub(r"\s+(cho tôi|giúp tôi|giúp mình|nha+|nhé+|nhe+|được không)$", "", v).strip()
 
         if slot_type == "LOCATION":
             v = v.replace("gấn đây", "gần đây")
             v = v.replace("quận nhất", "quận 1")
             v = v.replace("q1", "quận 1")
             v = v.replace("q.1", "quận 1")
+
+        if slot_type == "TASTE":
+            if re.search(r"\bkhông\s*cay\b", v) or re.search(r"\bkhong\s*cay\b", v):
+                return "không cay"
+            if re.search(r"\bcay+\b", v):
+                return "cay"
+            if re.search(r"\bngọt\b", v) or re.search(r"\bngot\b", v):
+                return "ngọt"
+            if re.search(r"\bmặn\b", v) or re.search(r"\bman\b", v):
+                return "mặn"
+            if re.search(r"\bchua\b", v) or re.search(r"\bchua\b", v):
+                return "chua"
+            if re.search(r"\bbeo\b", v):
+                return "béo"
+            if v == "ca":
+                return "cay"
 
         return v
 
@@ -157,6 +173,9 @@ class SlotValidator:
         elif slot_type == "DISH":
             if len(value) < 2:
                 return "invalid_dish"
+        elif slot_type == "TASTE":
+            if len(value) < 2:
+                return "invalid_taste"
 
         return None
 

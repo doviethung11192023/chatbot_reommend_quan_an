@@ -79,6 +79,17 @@ class DialogueStateTracker:
         if shift.override_intent is not None:
             intent_enum = shift.override_intent
 
+        if shift.dialogue_act in {"CANCEL", "GOODBYE"}:
+            state.current_intent = None
+            state.context["session_status"] = "closed"
+
+        if shift.dialogue_act == "CHANGE" and shift.force_replace_slots and shift.reset_mode == "none":
+            preserve = [
+                key for key in state.filled_slots.keys()
+                if key not in set(shift.force_replace_slots)
+            ]
+            state.reset_slots(preserve=preserve, reason=f"intent_shift:{shift.note or 'change'}")
+
         if shift.reset_mode == "hard":
             state.reset_slots(preserve=shift.preserve_slots, reason=f"intent_shift:{shift.note}")
         elif shift.reset_mode == "soft":

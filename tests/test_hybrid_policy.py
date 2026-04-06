@@ -123,3 +123,19 @@ def test_confirm_then_recommend_plan_is_persisted():
 
     assert action.type == "CONFIRM"
     assert state.context["policy_plan"]["next_action"] == "RECOMMEND"
+
+
+def test_change_dialogue_act_prompts_for_missing_slot():
+    state = _state(intent=IntentType.RECOMMEND_FOOD)
+    state.context["dialogue_act"] = "CHANGE"
+
+    policy = HybridPolicy(
+        rule_policy=DummyRulePolicy(rules=[]),
+        llm_policy=DummyLLMPolicy(action="RECOMMEND"),
+        debug=False,
+    )
+
+    action = policy.decide_action(state)
+
+    assert action.type == "ASK_SLOT"
+    assert action.slot == "DISH"
