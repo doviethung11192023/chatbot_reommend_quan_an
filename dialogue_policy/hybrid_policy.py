@@ -178,16 +178,14 @@ class HybridPolicy:
             self._dbg("force ASK_SLOT due missing_slots=%s action=%s", missing_slots, action.type)
             return self._build_action("ASK_SLOT", state)
 
+        if not missing_slots and action.type in {"ASK_SLOT", "CLARIFY"}:
+            if block_recommend:
+                return self._build_action("CLARIFY", state)
+            self._dbg("upgrade %s -> RECOMMEND due no missing slots", action.type)
+            return self._build_action("RECOMMEND", state)
+
         if block_recommend and action.type == "RECOMMEND":
             self._dbg("downgrade RECOMMEND -> CLARIFY due block_recommend flag")
-            return self._build_action("CLARIFY", state)
-
-        if quality < self.state_quality_threshold and action.type == "RECOMMEND":
-            self._dbg("downgrade RECOMMEND -> CLARIFY due low state quality=%.4f", quality)
-            return self._build_action("CLARIFY", state)
-
-        if quality < self.state_quality_threshold and action.type == "ASK_SLOT" and not state.get_missing_slots():
-            self._dbg("downgrade ASK_SLOT -> CLARIFY due low state quality=%.4f", quality)
             return self._build_action("CLARIFY", state)
 
         return action

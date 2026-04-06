@@ -43,3 +43,17 @@ def test_change_cue_without_slots_blocks_recommend_and_targets_dish():
     assert decision.override_intent == IntentType.RECOMMEND_FOOD
     assert "DISH" in decision.force_replace_slots
     assert decision.block_recommend is True
+
+
+def test_negate_dish_drops_slot_and_blocks_recommend():
+    detector = IntentShiftDetector()
+    decision = detector.detect(
+        user_text="không muốn ăn phở nữa",
+        current_intent=IntentType.RECOMMEND_FOOD,
+        predicted_intent=IntentType.RECOMMEND_FOOD,
+        accepted_slots=[{"type": "DISH", "value": "phở", "confidence": 0.95}],
+    )
+
+    assert decision.dialogue_act == "CHANGE"
+    assert "DISH" in decision.drop_slot_types
+    assert decision.block_recommend is True

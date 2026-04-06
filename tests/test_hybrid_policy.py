@@ -139,3 +139,19 @@ def test_change_dialogue_act_prompts_for_missing_slot():
 
     assert action.type == "ASK_SLOT"
     assert action.slot == "DISH"
+
+
+def test_no_missing_slots_upgrades_ask_to_recommend():
+    state = _state(intent=IntentType.RECOMMEND_PLACE_NEARBY)
+    state.filled_slots["DISH"] = Slot(type="DISH", value="pho", confidence=0.95, turn_index=0, is_confirmed=True)
+    state.filled_slots["LOCATION"] = Slot(type="LOCATION", value="quận 1", confidence=0.95, turn_index=0, is_confirmed=True)
+
+    policy = HybridPolicy(
+        rule_policy=DummyRulePolicy(rules=[]),
+        llm_policy=DummyLLMPolicy(action="ASK_SLOT", slot="PRICE"),
+        debug=False,
+    )
+
+    action = policy.decide_action(state)
+
+    assert action.type == "RECOMMEND"

@@ -16,6 +16,7 @@ class IntentShiftDecision:
     dialogue_act: Optional[str] = None
     block_recommend: bool = False
     note: str = ""
+    drop_slot_types: List[str] = field(default_factory=list)
 
 
 class IntentShiftDetector:
@@ -42,6 +43,14 @@ class IntentShiftDetector:
         "ăn món khác",
         "an mon khac",
     ]
+    NEGATE_DISH_PATTERNS = [
+        r"\b(không|khong)\s*muốn\s*ăn\b",
+        r"\b(không|khong)\s*ăn\b",
+    ]
+    NEGATE_GENERIC_PATTERNS = [
+        r"\b(không|khong)\s*muốn\s*ăn\s*gì\b",
+        r"\b(không|khong)\s*muốn\s*ăn\s*gi\b",
+    ]
 
     def detect(
         self,
@@ -55,10 +64,24 @@ class IntentShiftDetector:
 
         is_cancel = any(re.search(p, text) for p in self.CANCEL_PATTERNS)
         is_goodbye = any(re.search(p, text) for p in self.GOODBYE_PATTERNS)
+        is_negate_generic = any(re.search(p, text) for p in self.NEGATE_GENERIC_PATTERNS)
+        is_negate_dish = any(re.search(p, text) for p in self.NEGATE_DISH_PATTERNS)
+        has_dish_slot = any(str(s.get("type", "")).upper() == "DISH" for s in accepted_slots)
         has_change_cue = any(phrase in text for phrase in self.CHANGE_CUES)
         if not has_change_cue and current_intent in {IntentType.RECOMMEND_FOOD, IntentType.RECOMMEND_PLACE_NEARBY}:
-            if re.search(r"\bthôi\b.*\bmuốn\s*ăn\b", text):
+            if re.search(r"\bthôi\b.*\bmuốn\s*ăn\b", text) and not re.search(r"\bkhông\s*muốn\s*ăn\b", text):
                 has_change_cue = True
+
+        if not is_cancel and not is_goodbye and is_negate_dish and not is_negate_generic:
+            d.dialogue_act = "CHANGE"
+            d.block_recommend = True
+            d.note = "negate_dish"
+            if current_intent in {IntentType.RECOMMEND_FOOD, IntentType.RECOMMEND_PLACE_NEARBY}:
+                d.override_intent = current_intent
+            d.force_replace_slots.append("DISH")
+            if has_dish_slot:
+                d.drop_slot_types.append("DISH")
+            return d
 
         # Explicit preference change should not be treated as cancel.
         if not is_cancel and not is_goodbye and has_change_cue:

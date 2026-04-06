@@ -96,6 +96,11 @@ class DialogueStateTracker:
             # soft reset: giữ slot cốt lõi
             state.reset_slots(preserve=["LOCATION"], reason=f"intent_shift:{shift.note}")
 
+        if shift.drop_slot_types:
+            drop_types = {t for t in shift.drop_slot_types if t}
+            if drop_types:
+                accepted_slots = [s for s in accepted_slots if s.type not in drop_types]
+
         state.context["dialogue_act"] = shift.dialogue_act
         state.context["block_recommend"] = bool(shift.block_recommend)
         state.context["intent_shift_note"] = shift.note
@@ -104,6 +109,7 @@ class DialogueStateTracker:
             "reset_mode": shift.reset_mode,
             "preserve_slots": list(shift.preserve_slots),
             "force_replace_slots": list(shift.force_replace_slots),
+            "drop_slot_types": list(shift.drop_slot_types),
             "dialogue_act": shift.dialogue_act,
             "block_recommend": bool(shift.block_recommend),
             "note": shift.note,

@@ -54,6 +54,35 @@ class SlotValidator:
         "được không",
     }
 
+    LOCATION_STOPWORDS = {
+        "mình",
+        "toi",
+        "tôi",
+        "tụi mình",
+        "chúng tôi",
+        "chung toi",
+        "ở",
+        "tại",
+        "trong",
+        "đây",
+        "day",
+        "kia",
+    }
+
+    PRICE_STOPWORDS = {
+        "tầm",
+        "khoảng",
+        "cũng",
+        "sinh viên",
+        "sinh vien",
+    }
+
+    PRICE_PATTERNS = [
+        r"\b\d+\s*(k|nghìn|ngan|vnd|vnđ|đ)\b",
+        r"\b(tầm|khoảng|duoi|dưới|tren|trên)\s*\d+\s*(k|nghìn|ngan|vnd|vnđ|đ)?\b",
+        r"\b(rẻ|re|bình dân|binh dan|trung bình|cao|đắt|dat)\b",
+    ]
+
     LOCATION_PATTERNS = [
         r"^gần đây$",
         r"^nearby$",
@@ -137,6 +166,10 @@ class SlotValidator:
             v = v.replace("q1", "quận 1")
             v = v.replace("q.1", "quận 1")
 
+        if slot_type == "PRICE":
+            v = v.replace("k ", "k")
+            v = v.replace("ngan", "nghìn")
+
         if slot_type == "TASTE":
             if re.search(r"\bkhông\s*cay\b", v) or re.search(r"\bkhong\s*cay\b", v):
                 return "không cay"
@@ -166,6 +199,8 @@ class SlotValidator:
             return "low_confidence"
 
         if slot_type == "LOCATION":
+            if value in self.LOCATION_STOPWORDS:
+                return "invalid_location"
             if not any(re.match(p, value, flags=re.IGNORECASE) for p in self.LOCATION_PATTERNS):
                 # vẫn cho phép các location tự do nếu đủ dài và không phải junk
                 if len(value) < 3:
@@ -173,6 +208,11 @@ class SlotValidator:
         elif slot_type == "DISH":
             if len(value) < 2:
                 return "invalid_dish"
+        elif slot_type == "PRICE":
+            if value in self.PRICE_STOPWORDS:
+                return "invalid_price"
+            if not any(re.search(p, value, flags=re.IGNORECASE) for p in self.PRICE_PATTERNS):
+                return "invalid_price"
         elif slot_type == "TASTE":
             if len(value) < 2:
                 return "invalid_taste"
@@ -186,6 +226,15 @@ class SlotValidator:
             if prev is None:
                 best[s.type] = s
                 continue
+
+            if s.type == "PRICE":
+                prev_has_digit = bool(re.search(r"\d", prev.value or ""))
+                cur_has_digit = bool(re.search(r"\d", s.value or ""))
+                if cur_has_digit and not prev_has_digit:
+                    best[s.type] = s
+                    continue
+                if prev_has_digit and not cur_has_digit:
+                    continue
 
             # ưu tiên confidence cao hơn, nếu bằng nhau thì giá trị dài hơn
             if s.confidence > prev.confidence:
