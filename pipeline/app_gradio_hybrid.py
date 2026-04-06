@@ -163,7 +163,6 @@ import gradio as gr
 
 from dialogue_policy.hf_llm_policy import HuggingFaceLLMPolicy
 from dialogue_policy.hybrid_policy import HybridPolicy
-from dialogue_policy.ml_policy import SklearnMLPolicy
 from dialogue_policy.rule_based_policy import RuleBasedPolicy
 from pipeline.dialogue_manager import DialogueOrchestrator, IntentClassifierHF, SlotExtractorHF
 from dialogue_state_tracking.dst import DialogueStateTracker
@@ -187,9 +186,8 @@ def build_orchestrator(args) -> DialogueOrchestrator:
     )
 
     rule_policy = RuleBasedPolicy()
-    # ml_policy = SklearnMLPolicy(model_path=args.ml_model, debug=args.debug) if args.ml_model else None
-    # llm_policy = HuggingFaceLLMPolicy(model_name=args.llm_model, debug=args.debug) if args.llm_model else None
-    ml_policy = SklearnMLPolicy(args.ml_model) if args.ml_model else None
+    # Option 3: ML policy is intentionally disabled in runtime decision path.
+    ml_policy = None
 
     llm_policy = None
    
@@ -228,8 +226,9 @@ def format_kpis(stats: Dict[str, Any]) -> str:
     intent = stats.get("resolved_intent", "N/A")
     missing_slots = stats.get("missing_slots", [])
     slot_conflicts = stats.get("slot_conflicts", 0)
+    policy_plan = stats.get("policy_plan")
 
-    return (
+    kpi_text = (
         f"### Debug Summary\n"
         f"- **Intent**: `{intent}`\n"
         f"- **Policy source**: `{policy_source}`\n"
@@ -238,6 +237,11 @@ def format_kpis(stats: Dict[str, Any]) -> str:
         f"- **Missing slots**: `{missing_slots}`\n"
         f"- **Slot conflicts**: `{slot_conflicts}`\n"
     )
+
+    if policy_plan:
+        kpi_text += f"- **Policy plan**: `{policy_plan}`\n"
+
+    return kpi_text
 
 
 def main():
@@ -299,6 +303,7 @@ def main():
                 "state_quality": state_quality,
                 "missing_slots": state.get("missing_slots", []),
                 "slot_conflicts": state.get("slot_conflicts", 0),
+                "policy_plan": state.get("policy_plan"),
             }
         )
 

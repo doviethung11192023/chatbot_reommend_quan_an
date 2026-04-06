@@ -60,6 +60,9 @@ class LLMPolicyProtocol(Protocol):
     def decide_action(self, state_summary: Dict[str, Any], action_space: List[str]) -> str:
         ...
 
+    def decide_decision(self, state_summary: Dict[str, Any], action_space: List[str]) -> Dict[str, Any]:
+        ...
+
 
 @dataclass
 class PolicyDecisionLog:
@@ -70,7 +73,7 @@ class PolicyDecisionLog:
 
 
 class HybridPolicy:
-    """Priority mềm: Rule (safe) -> ML -> LLM -> fallback, có anti-repeat."""
+    """Option 3: Rule safety layer + LLM decision maker + DST memory."""
 
     def __init__(
         self,
@@ -78,9 +81,6 @@ class HybridPolicy:
         ml_policy: Optional[MLPolicyProtocol] = None,
         llm_policy: Optional[LLMPolicyProtocol] = None,
         ml_conf_threshold: float = 0.7,
-        fusion_rule_weight: float = 0.6,
-        fusion_ml_weight: float = 0.4,
-        recommend_direct_threshold: float = 0.85,
         confirm_threshold: float = 0.72,
         templates: Optional[Dict[str, List[str]]] = None,
         rng: Optional[random.Random] = None,
@@ -93,9 +93,6 @@ class HybridPolicy:
         self.ml_policy = ml_policy
         self.llm_policy = llm_policy
         self.ml_conf_threshold = ml_conf_threshold
-        self.fusion_rule_weight = fusion_rule_weight
-        self.fusion_ml_weight = fusion_ml_weight
-        self.recommend_direct_threshold = recommend_direct_threshold
         self.confirm_threshold = confirm_threshold
         self.templates = templates or DEFAULT_TEMPLATES
         self.rng = rng or random.Random(42)
@@ -127,64 +124,23 @@ class HybridPolicy:
             state.current_intent.value if state.current_intent else None,
         )
 
-        rule, rule_priority = self._select_best_rule(state)
-        rule_action = self._build_action_from_rule(rule, state) if rule else None
-        ml_action, ml_conf = self._try_ml(state)
+        # Rule layer is safety-only in Option 3.
+        safety_rule = self._select_safety_rule(state)
+        if safety_rule is not None:
+            safety_action = self._build_action_from_rule(safety_rule, state)
+            self._last_log = PolicyDecisionLog(source="RULE", action=self._normalize_action(safety_action.type), confidence=1.0, note="safety_rule")
+            return self._apply_state_quality_guard(state, safety_action)
 
-        should_escape = self._should_try_model_escape(state, rule_action)
-        if should_escape and self.allow_ml_llm_escape:
-            self._dbg("rule escape condition met -> try ML/LLM")
-            escaped = ml_action or self._try_llm(state)
-            if escaped:
-                return self._apply_state_quality_guard(state, escaped)
-
-        final_action: Optional[Action] = None
-        final_source = "FALLBACK"
-        final_score = 0.0
-        final_note = ""
-
-        if rule_action and ml_action:
-            final_action, final_source, final_score, final_note = self._fuse_rule_and_ml(
-                state=state,
-                rule=rule,
-                rule_priority=rule_priority,
-                rule_action=rule_action,
-                ml_action=ml_action,
-                ml_conf=ml_conf,
-            )
-        elif rule_action:
-            final_action = rule_action
-            final_source = "RULE"
-            final_score = self._score_rule_action(rule_action, rule, state)
-        elif ml_action:
-            final_action = ml_action
-            final_source = "ML"
-            final_score = ml_conf
-
-        if final_action is not None:
-            if self._should_plan_confirm_then_recommend(state, final_action, final_score):
-                self._last_log = PolicyDecisionLog(
-                    source=final_source,
-                    action="CONFIRM",
-                    confidence=final_score,
-                    note=(final_note + " | " if final_note else "") + "planned_next=RECOMMEND",
-                )
-                return self._build_planned_confirm_action(state, final_score, final_source, final_note)
-
-            self._last_log = PolicyDecisionLog(source=final_source, action=self._normalize_action(final_action.type), confidence=final_score, note=final_note)
-            return self._apply_state_quality_guard(state, final_action)
-
-        ml_action, ml_conf = self._try_ml(state)
-        if ml_action:
-            if self._should_plan_confirm_then_recommend(state, ml_action, ml_conf):
-                self._last_log = PolicyDecisionLog(source="ML", action="CONFIRM", confidence=ml_conf, note="planned_next=RECOMMEND")
-                return self._build_planned_confirm_action(state, ml_conf, "ML", "planned_next=RECOMMEND")
-            self._last_log = PolicyDecisionLog(source="ML", action=self._normalize_action(ml_action.type), confidence=ml_conf)
-            return self._apply_state_quality_guard(state, ml_action)
-
-        llm_action = self._try_llm(state)
-        if llm_action:
+        llm_action = self._decide_with_llm(state)
+        if llm_action is not None:
             return self._apply_state_quality_guard(state, llm_action)
+
+        # Fallback deterministic policy if no LLM available.
+        if state.get_missing_slots():
+            self._last_log = PolicyDecisionLog(source="FALLBACK", action="ASK_SLOT", confidence=0.0, note="llm_unavailable")
+            return self._build_action("ASK_SLOT", state)
+        self._last_log = PolicyDecisionLog(source="FALLBACK", action="RECOMMEND", confidence=0.0, note="llm_unavailable")
+        return self._build_action("RECOMMEND", state)
 
         self._last_log = PolicyDecisionLog(source="FALLBACK", action="FALLBACK")
         return self._build_action("FALLBACK", state)
@@ -211,15 +167,6 @@ class HybridPolicy:
 
         return action
 
-    def _should_try_model_escape(self, state: DialogueState, rule_action: Optional[Action]) -> bool:
-        if rule_action is None:
-            return False
-
-        quality = getattr(state, "get_state_quality", lambda: 1.0)()
-        slot_conflicts = int(getattr(state, "context", {}).get("slot_conflicts", 0) or 0)
-        repetitive = self._is_repetitive_prompt(state, rule_action.type)
-        return repetitive or slot_conflicts > 1 or quality < 0.5
-    
     def _select_best_rule(self, state: DialogueState) -> tuple[Optional[Dict[str, Any]], int]:
         matched: List[Dict[str, Any]] = []
         for idx, rule in enumerate(getattr(self.rule_policy, "rules", [])):
@@ -234,6 +181,30 @@ class HybridPolicy:
         selected = matched[0]
         return selected, int(selected.get("priority", 0) or 0)
 
+    def _select_safety_rule(self, state: DialogueState) -> Optional[Dict[str, Any]]:
+        matched: List[Dict[str, Any]] = []
+        for rule in getattr(self.rule_policy, "rules", []):
+            cond = rule.get("condition", {})
+            try:
+                ok = self.rule_policy._evaluate_condition(cond, state)
+            except Exception:
+                ok = False
+            if not ok:
+                continue
+
+            action_type = self._normalize_action(str(rule.get("action", {}).get("type", "FALLBACK")).upper())
+            intent_cond = str(cond.get("intent", "")).upper()
+            is_safety_intent = intent_cond in {"SMALL_TALK", "OUT_OF_SCOPE", "NO_CLEAR_INTENT"}
+            is_safety_action = action_type in {"RESPOND", "FALLBACK"}
+            if is_safety_intent or is_safety_action:
+                matched.append(rule)
+
+        if not matched:
+            return None
+
+        matched.sort(key=lambda r: r.get("priority", 0), reverse=True)
+        return matched[0]
+
     def _build_action_from_rule(self, rule: Dict[str, Any], state: DialogueState) -> Action:
         action_cfg = rule.get("action", {})
         action_type = self._normalize_action(str(action_cfg.get("type", "FALLBACK")).upper())
@@ -245,31 +216,76 @@ class HybridPolicy:
         template = self._pick_non_repeated_template(templates, state)
         return Action(action_type=action_type, slot=slot, template=template)
 
-    def _try_ml(self, state: DialogueState) -> tuple[Optional[Action], float]:
-        if self.ml_policy is None:
-            return None, 0.0
-        pred = self.ml_policy.predict_action(state) or {}
-        ml_action = self._normalize_action(str(pred.get("action", "FALLBACK")).upper())
-        ml_conf = float(pred.get("confidence", 0.0))
-        self._dbg("ml_pred=%s normalized=%s conf=%.4f", pred, ml_action, ml_conf)
-        if ml_action in ACTION_SPACE and ml_conf >= self.ml_conf_threshold:
-            return self._build_action(ml_action, state), ml_conf
-        return None, ml_conf
-
-    def _try_llm(self, state: DialogueState) -> Optional[Action]:
+    def _decide_with_llm(self, state: DialogueState) -> Optional[Action]:
         if self.llm_policy is None:
             return None
+
+        payload = self._build_llm_payload(state)
+        self._dbg("llm_payload=%s", payload)
+
         try:
-            pred = self.llm_policy.decide_action(state.get_context_summary(), sorted(ACTION_SPACE))
-            llm_action = self._normalize_action(str(pred).upper())
-            self._dbg("llm_pred=%s normalized=%s", pred, llm_action)
-            if llm_action in ACTION_SPACE:
-                self._last_log = PolicyDecisionLog(source="LLM", action=llm_action, confidence=0.0)
-                return self._build_action(llm_action, state)
+            if hasattr(self.llm_policy, "decide_decision"):
+                decision = self.llm_policy.decide_decision(payload, sorted(ACTION_SPACE)) or {}
+            else:
+                raw_action = self.llm_policy.decide_action(payload, sorted(ACTION_SPACE))
+                decision = {"action": raw_action}
+
+            action_type = self._normalize_action(str(decision.get("action", "FALLBACK")).upper())
+            if action_type not in ACTION_SPACE:
+                action_type = "FALLBACK"
+
+            slot = decision.get("slot")
+            if slot is not None:
+                slot = str(slot).upper().strip()
+            if action_type in {"ASK_SLOT", "CLARIFY"} and not slot:
+                slot = self._choose_target_slot(state)
+
+            response = str(decision.get("response", "") or "").strip()
+            next_action = str(decision.get("next_action", "") or "").upper().strip() or None
+            reason = str(decision.get("reason", "") or "")
+
+            if action_type == "RECOMMEND" and state.get_missing_slots():
+                action_type = "ASK_SLOT"
+                slot = self._choose_target_slot(state)
+
+            if action_type == "CONFIRM" and not next_action and state.is_complete():
+                next_action = "RECOMMEND"
+
+            action = self._build_action(action_type, state, planned_next_action=next_action)
+            if slot and action.type in {"ASK_SLOT", "CLARIFY"}:
+                action.slot = slot
+            if response:
+                action.template = response
+
+            self._last_log = PolicyDecisionLog(source="LLM", action=action.type, confidence=0.0, note=reason)
+            return action
         except Exception as ex:
             self._dbg("LLM error=%s", ex)
             self._last_log = PolicyDecisionLog(source="FALLBACK", action="FALLBACK", note=f"LLM error: {ex}")
         return None
+
+    def _build_llm_payload(self, state: DialogueState) -> Dict[str, Any]:
+        history: List[Dict[str, Any]] = []
+        for t in getattr(state, "turns", [])[-4:]:
+            history.append(
+                {
+                    "user": t.user_utterance,
+                    "bot_action": t.bot_action,
+                    "bot_response": t.bot_response,
+                }
+            )
+        return {
+            "intent": state.current_intent.value if state.current_intent else None,
+            "filled_slots": {k: v.value for k, v in state.filled_slots.items()},
+            "missing_slots": state.get_missing_slots(),
+            "is_complete": state.is_complete(),
+            "state_quality": getattr(state, "get_state_quality", lambda: 1.0)(),
+            "turn_count": len(getattr(state, "turns", [])),
+            "dialogue_act": str(getattr(state, "context", {}).get("dialogue_act", "") or ""),
+            "block_recommend": bool(getattr(state, "context", {}).get("block_recommend", False)),
+            "policy_plan": getattr(state, "context", {}).get("policy_plan", {}),
+            "history": history,
+        }
 
     def _build_action(
         self,
@@ -287,6 +303,8 @@ class HybridPolicy:
                 "current_action": action_type,
                 "next_action": planned_next_action,
             }
+        elif action_type != "CONFIRM":
+            state.context.pop("policy_plan", None)
         return Action(action_type=action_type, slot=slot, template=template)
 
     def _choose_target_slot(self, state: DialogueState) -> Optional[str]:
@@ -339,79 +357,6 @@ class HybridPolicy:
             return f"Mình hiểu bạn đang muốn tìm quán cho {summary}. Mình gợi ý ngay nhé, đúng không?"
 
         return self._pick_non_repeated_template(self.templates.get("CONFIRM", DEFAULT_TEMPLATES["CONFIRM"]), state)
-
-    def _score_rule_action(self, action: Action, rule: Optional[Dict[str, Any]], state: DialogueState) -> float:
-        priority = float(rule.get("priority", 0) if rule else 0)
-        quality = getattr(state, "get_state_quality", lambda: 1.0)()
-        if action.type in {"ASK_SLOT", "CLARIFY", "RESPOND", "FALLBACK"}:
-            return 0.90 + min(0.05, priority / 1000.0)
-        if action.type == "RECOMMEND":
-            completeness = 1.0 if state.is_complete() else 0.0
-            return min(0.92, 0.62 + 0.12 * completeness + 0.12 * quality + min(0.06, priority / 200.0))
-        if action.type == "CONFIRM":
-            return min(0.90, 0.55 + 0.15 * quality + min(0.08, priority / 100.0))
-        return 0.60
-
-    @staticmethod
-    def _actions_compatible(rule_action: Action, ml_action: Action) -> bool:
-        if rule_action.type == ml_action.type:
-            return True
-        if {rule_action.type, ml_action.type} <= {"RECOMMEND", "CONFIRM"}:
-            return True
-        return False
-
-    def _fuse_rule_and_ml(
-        self,
-        state: DialogueState,
-        rule: Optional[Dict[str, Any]],
-        rule_priority: int,
-        rule_action: Action,
-        ml_action: Action,
-        ml_conf: float,
-    ) -> tuple[Action, str, float, str]:
-        rule_score = self._score_rule_action(rule_action, rule, state)
-        ml_score = float(ml_conf)
-        compatible = self._actions_compatible(rule_action, ml_action)
-
-        if compatible:
-            fused_score = (self.fusion_rule_weight * rule_score) + (self.fusion_ml_weight * ml_score)
-            if ml_action.type == "RECOMMEND" and rule_action.type in {"ASK_SLOT", "CLARIFY"} and state.is_complete():
-                if fused_score >= self.recommend_direct_threshold:
-                    return ml_action, "FUSED", fused_score, f"rule_score={rule_score:.3f}|ml_score={ml_score:.3f}|priority={rule_priority}"
-                if fused_score >= self.confirm_threshold:
-                    confirm_action = self._build_action("CONFIRM", state, planned_next_action="RECOMMEND")
-                    return confirm_action, "FUSED", fused_score, f"rule_score={rule_score:.3f}|ml_score={ml_score:.3f}|priority={rule_priority}"
-            if fused_score >= self.recommend_direct_threshold:
-                chosen = rule_action if rule_score >= ml_score else ml_action
-                return chosen, "FUSED", fused_score, f"rule_score={rule_score:.3f}|ml_score={ml_score:.3f}|priority={rule_priority}"
-            if fused_score >= self.confirm_threshold and ml_action.type == "RECOMMEND" and state.is_complete():
-                confirm_action = self._build_action("CONFIRM", state, planned_next_action="RECOMMEND")
-                return confirm_action, "FUSED", fused_score, f"rule_score={rule_score:.3f}|ml_score={ml_score:.3f}|priority={rule_priority}"
-
-            chosen = rule_action if rule_score >= ml_score else ml_action
-            return chosen, "FUSED", fused_score, f"rule_score={rule_score:.3f}|ml_score={ml_score:.3f}|priority={rule_priority}"
-
-        if state.is_complete() and rule_action.type in {"ASK_SLOT", "CLARIFY"} and ml_action.type == "RECOMMEND":
-            fused_score = (self.fusion_rule_weight * rule_score) + (self.fusion_ml_weight * ml_score)
-            if fused_score >= self.recommend_direct_threshold:
-                return ml_action, "FUSED", fused_score, f"rule_score={rule_score:.3f}|ml_score={ml_score:.3f}|priority={rule_priority}"
-            if fused_score >= self.confirm_threshold:
-                confirm_action = self._build_action("CONFIRM", state, planned_next_action="RECOMMEND")
-                return confirm_action, "FUSED", fused_score, f"rule_score={rule_score:.3f}|ml_score={ml_score:.3f}|priority={rule_priority}"
-
-        if ml_score >= self.ml_conf_threshold and ml_score >= rule_score + 0.10:
-            return ml_action, "ML", ml_score, f"rule_score={rule_score:.3f}|ml_score={ml_score:.3f}|priority={rule_priority}"
-
-        return rule_action, "RULE", rule_score, f"rule_score={rule_score:.3f}|ml_score={ml_score:.3f}|priority={rule_priority}"
-
-    def _should_plan_confirm_then_recommend(self, state: DialogueState, action: Action, score: float) -> bool:
-        if action.type != "RECOMMEND":
-            return False
-        if not state.is_complete():
-            return False
-        if bool(getattr(state, "context", {}).get("block_recommend", False)):
-            return False
-        return self.confirm_threshold <= score < self.recommend_direct_threshold
 
     def _build_planned_confirm_action(self, state: DialogueState, score: float, source: str, note: str) -> Action:
         action = self._build_action("CONFIRM", state, planned_next_action="RECOMMEND")

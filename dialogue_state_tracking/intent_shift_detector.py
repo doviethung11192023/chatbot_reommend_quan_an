@@ -20,7 +20,7 @@ class IntentShiftDecision:
 
 class IntentShiftDetector:
     CANCEL_PATTERNS = [
-        r"\b(thôi|không muốn|dừng|bỏ qua|hủy|cancel|không ăn nữa|không muốn ăn nữa)\b",
+        r"\b(không muốn ăn nữa|không ăn nữa|dừng lại|bỏ qua|hủy|cancel|stop)\b",
     ]
     GOODBYE_PATTERNS = [
         r"\b(tạm biệt|bye|goodbye|hẹn gặp lại)\b",
@@ -38,6 +38,37 @@ class IntentShiftDetector:
     ) -> IntentShiftDecision:
         text = (user_text or "").strip().lower()
         d = IntentShiftDecision()
+
+        # Explicit preference change should not be treated as cancel.
+        has_change_cue = any(
+            phrase in text
+            for phrase in ["muốn ăn", "muon an", "đổi món", "doi mon", "món khác", "mon khac", "quán khác", "quan khac"]
+        )
+        if has_change_cue and accepted_slots:
+            d.dialogue_act = "CHANGE"
+            d.block_recommend = False
+            d.note = "change_preference"
+            if current_intent in {IntentType.RECOMMEND_FOOD, IntentType.RECOMMEND_PLACE_NEARBY}:
+                d.override_intent = current_intent
+            d.force_replace_slots.extend(
+                sorted(
+                    {
+                        str(s.get("type", "")).upper().strip()
+                        for s in accepted_slots
+                        if s.get("type")
+                    }
+                )
+            )
+            return d
+
+        # Keep terse stop messages as cancel, but avoid matching trailing polite '... thôi'.
+        if text in {"thôi", "thôi nhé", "thôi nha", "thôi ạ"}:
+            d.override_intent = IntentType.NO_CLEAR_INTENT
+            d.dialogue_act = "CANCEL"
+            d.reset_mode = "hard"
+            d.block_recommend = True
+            d.note = "cancel_short"
+            return d
 
         if any(re.search(p, text) for p in self.CANCEL_PATTERNS):
             d.override_intent = IntentType.NO_CLEAR_INTENT

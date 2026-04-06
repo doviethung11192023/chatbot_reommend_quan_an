@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, List, Optional
 
@@ -50,7 +51,11 @@ class HuggingFaceLLMPolicy:
         self.model.eval()
 
     def decide_action(self, state_summary: Dict[str, Any], action_space: List[str]) -> str:
-        prompt = self._build_prompt(state_summary, action_space)
+        decision = self.decide_decision(state_summary, action_space)
+        return str(decision.get("action", "FALLBACK")).upper()
+
+    def decide_decision(self, state_summary: Dict[str, Any], action_space: List[str]) -> Dict[str, Any]:
+        prompt = self._build_structured_prompt(state_summary, action_space)
 
         with torch.inference_mode():
             inputs = self.tokenizer(prompt, return_tensors="pt")
@@ -67,8 +72,8 @@ class HuggingFaceLLMPolicy:
 
         text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
         generated = text[len(prompt):].strip() if text.startswith(prompt) else text.strip()
-        action = self._extract_action(generated, action_space)
-        return action
+        parsed = self._extract_decision(generated, action_space)
+        return parsed
 
     @staticmethod
     def _build_prompt(state_summary: Dict[str, Any], action_space: List[str]) -> str:
@@ -84,6 +89,29 @@ class HuggingFaceLLMPolicy:
         )
 
     @staticmethod
+    def _build_structured_prompt(state_summary: Dict[str, Any], action_space: List[str]) -> str:
+        return (
+            "Bạn là bộ quyết định action cho chatbot gợi ý quán ăn.\n"
+            "Bạn PHẢI trả về duy nhất 1 JSON object hợp lệ, không thêm text khác.\n"
+            "Schema bắt buộc:\n"
+            "{\n"
+            '  "action": "ASK_SLOT|CLARIFY|CONFIRM|RECOMMEND|RESPOND|FALLBACK",\n'
+            '  "slot": "DISH|LOCATION|PRICE|null",\n'
+            '  "response": "string",\n'
+            '  "next_action": "RECOMMEND|null",\n'
+            '  "reason": "string"\n'
+            "}\n\n"
+            f"State: {state_summary}\n"
+            f"Action hop le: {', '.join(action_space)}\n"
+            "Rang buoc:\n"
+            "- Neu missing_slots khong rong thi khong duoc RECOMMEND.\n"
+            "- Neu action la ASK_SLOT/CLARIFY thi uu tien slot dang thieu.\n"
+            "- Neu state da du thong tin nhung can chac chan, co the tra ve CONFIRM va next_action='RECOMMEND'.\n"
+            "- response phai cu the theo context, khong duoc generic.\n"
+            "JSON:"
+        )
+
+    @staticmethod
     def _extract_action(text: str, action_space: List[str]) -> str:
         upper_text = text.upper()
 
@@ -94,3 +122,45 @@ class HuggingFaceLLMPolicy:
 
         # fallback
         return "FALLBACK"
+
+    @staticmethod
+    def _extract_decision(text: str, action_space: List[str]) -> Dict[str, Any]:
+        raw = (text or "").strip()
+        candidate = raw
+
+        m = re.search(r"\{[\s\S]*\}", raw)
+        if m:
+            candidate = m.group(0)
+
+        try:
+            data = json.loads(candidate)
+            if not isinstance(data, dict):
+                data = {}
+        except Exception:
+            data = {}
+
+        action = str(data.get("action", "") or "").upper().strip()
+        if action not in action_space:
+            action = HuggingFaceLLMPolicy._extract_action(raw, action_space)
+
+        slot = data.get("slot")
+        if slot is not None:
+            slot = str(slot).upper().strip()
+            if slot in {"", "NONE", "NULL"}:
+                slot = None
+
+        response = str(data.get("response", "") or "").strip()
+        next_action = data.get("next_action")
+        if next_action is not None:
+            next_action = str(next_action).upper().strip()
+            if next_action in {"", "NONE", "NULL"}:
+                next_action = None
+
+        reason = str(data.get("reason", "") or "").strip()
+        return {
+            "action": action,
+            "slot": slot,
+            "response": response,
+            "next_action": next_action,
+            "reason": reason,
+        }

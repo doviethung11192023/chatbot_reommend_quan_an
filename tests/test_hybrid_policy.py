@@ -1,5 +1,4 @@
 from dialogue_policy.hybrid_policy import HybridPolicy
-from dialogue_policy.rule_based_policy import Action
 from dialogue_state_tracking.state_schema import DialogueState, IntentType, Slot
 
 
@@ -11,21 +10,25 @@ class DummyRulePolicy:
         return bool(condition.get("always", False))
 
 
-class DummyMLPolicy:
-    def __init__(self, action="RECOMMEND", confidence=0.95):
-        self.action = action
-        self.confidence = confidence
-
-    def predict_action(self, state):
-        return {"action": self.action, "confidence": self.confidence}
-
-
 class DummyLLMPolicy:
-    def __init__(self, action="FALLBACK"):
+    def __init__(self, action="FALLBACK", slot=None, response="", next_action=None, reason=""):
         self.action = action
+        self.slot = slot
+        self.response = response
+        self.next_action = next_action
+        self.reason = reason
 
     def decide_action(self, state_summary, action_space):
         return self.action
+
+    def decide_decision(self, state_summary, action_space):
+        return {
+            "action": self.action,
+            "slot": self.slot,
+            "response": self.response,
+            "next_action": self.next_action,
+            "reason": self.reason,
+        }
 
 
 def _state(intent=IntentType.RECOMMEND_PLACE_NEARBY, missing_conflicts=0):
@@ -39,8 +42,7 @@ def test_recommend_is_downgraded_to_ask_slot_when_missing_slots():
     state = _state()
     policy = HybridPolicy(
         rule_policy=DummyRulePolicy(rules=[]),
-        ml_policy=DummyMLPolicy(action="RECOMMEND", confidence=0.99),
-        llm_policy=None,
+        llm_policy=DummyLLMPolicy(action="RECOMMEND"),
         debug=False,
     )
 
@@ -61,49 +63,41 @@ def test_dynamic_slot_target_uses_missing_slot_order():
     assert clarify_action.slot == "DISH"
 
 
-def test_rule_escape_to_ml_when_slot_conflicts_high():
-    state = _state(missing_conflicts=2)
+def test_safety_rule_handles_small_talk_before_llm():
+    state = _state(intent=IntentType.SMALL_TALK)
 
     rule = {
         "priority": 10,
         "condition": {"always": True},
         "action": {
-            "type": "ASK_SLOT",
-            "slot_to_ask": "LOCATION",
-            "templates": ["rule ask"],
+            "type": "RESPOND",
+            "templates": ["rule small talk"],
         },
     }
 
     policy = HybridPolicy(
         rule_policy=DummyRulePolicy(rules=[rule]),
-        ml_policy=DummyMLPolicy(action="RESPOND", confidence=0.9),
-        llm_policy=DummyLLMPolicy(action="FALLBACK"),
+        llm_policy=DummyLLMPolicy(action="RECOMMEND", response="llm should not run"),
         debug=False,
     )
 
     action = policy.decide_action(state)
 
     assert action.type == "RESPOND"
+    assert action.template == "rule small talk"
 
 
-def test_rule_is_prioritized_for_ask_slot_when_incomplete():
+def test_llm_can_choose_slot_with_specific_response():
     state = _state()
     state.filled_slots["DISH"] = Slot(type="DISH", value="pho", confidence=0.95, turn_index=0, is_confirmed=True)
 
-    rule = {
-        "priority": 10,
-        "condition": {"always": True},
-        "action": {
-            "type": "ASK_SLOT",
-            "slot_to_ask": "LOCATION",
-            "templates": ["rule ask"],
-        },
-    }
-
     policy = HybridPolicy(
-        rule_policy=DummyRulePolicy(rules=[rule]),
-        ml_policy=DummyMLPolicy(action="RESPOND", confidence=0.99),
-        llm_policy=None,
+        rule_policy=DummyRulePolicy(rules=[]),
+        llm_policy=DummyLLMPolicy(
+            action="ASK_SLOT",
+            slot="LOCATION",
+            response="Bạn đang ở khu vực nào để mình gợi ý quán gần nhất?",
+        ),
         debug=False,
     )
 
@@ -111,56 +105,18 @@ def test_rule_is_prioritized_for_ask_slot_when_incomplete():
 
     assert action.type == "ASK_SLOT"
     assert action.slot == "LOCATION"
+    assert "khu vực" in action.template
 
 
-def test_rule_ml_fusion_can_choose_ml_recommendation():
+def test_confirm_then_recommend_plan_is_persisted():
     state = _state()
     state.filled_slots["DISH"] = Slot(type="DISH", value="pho", confidence=0.95, turn_index=0, is_confirmed=True)
     state.filled_slots["LOCATION"] = Slot(type="LOCATION", value="quận 1", confidence=0.95, turn_index=0, is_confirmed=True)
 
-    rule = {
-        "priority": 5,
-        "condition": {"always": True},
-        "action": {
-            "type": "ASK_SLOT",
-            "slot_to_ask": "PRICE",
-            "templates": ["rule ask price"],
-        },
-    }
-
     policy = HybridPolicy(
-        rule_policy=DummyRulePolicy(rules=[rule]),
-        ml_policy=DummyMLPolicy(action="RECOMMEND", confidence=0.98),
-        llm_policy=None,
+        rule_policy=DummyRulePolicy(rules=[]),
+        llm_policy=DummyLLMPolicy(action="CONFIRM", next_action="RECOMMEND", response="Mình xác nhận lại trước khi gợi ý nhé."),
         debug=False,
-    )
-
-    action = policy.decide_action(state)
-
-    assert action.type in {"RECOMMEND", "CONFIRM"}
-
-
-def test_confirm_then_recommend_is_planned_when_confidence_midrange():
-    state = _state()
-    state.filled_slots["DISH"] = Slot(type="DISH", value="pho", confidence=0.95, turn_index=0, is_confirmed=True)
-    state.filled_slots["LOCATION"] = Slot(type="LOCATION", value="quận 1", confidence=0.95, turn_index=0, is_confirmed=True)
-
-    rule = {
-        "priority": 8,
-        "condition": {"always": True},
-        "action": {
-            "type": "RECOMMEND",
-            "templates": ["rule recommend"],
-        },
-    }
-
-    policy = HybridPolicy(
-        rule_policy=DummyRulePolicy(rules=[rule]),
-        ml_policy=DummyMLPolicy(action="RECOMMEND", confidence=0.75),
-        llm_policy=None,
-        debug=False,
-        confirm_threshold=0.72,
-        recommend_direct_threshold=0.85,
     )
 
     action = policy.decide_action(state)
