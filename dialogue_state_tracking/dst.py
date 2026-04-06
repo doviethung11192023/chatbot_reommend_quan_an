@@ -1,346 +1,4 @@
-# """
-# Dialogue State Tracker
-# Quản lý trạng thái hội thoại
-# """
 
-# from typing import Dict, List, Optional
-# import uuid
-# from .state_schema import DialogueState, Turn, Slot, IntentType
-
-
-# class DialogueStateTracker:
-#     """
-#     Tracker quản lý dialogue states của nhiều sessions
-    
-#     Features:
-#     - Multi-session support
-#     - State persistence
-#     - Slot merging logic
-#     - Context resolution
-#     """
-    
-#     def __init__(self):
-#         self.sessions: Dict[str, DialogueState] = {}
-    
-#     def create_session(self, user_id: Optional[str] = None) -> str:
-#         """Tạo session mới"""
-#         session_id = str(uuid.uuid4())
-#         self.sessions[session_id] = DialogueState(
-#             session_id=session_id,
-#             user_id=user_id
-#         )
-#         return session_id
-    
-#     def get_state(self, session_id: str) -> Optional[DialogueState]:
-#         """Lấy state của session"""
-#         return self.sessions.get(session_id)
-    
-#     def update_state(
-#         self,
-#         session_id: str,
-#         user_utterance: str,
-#         intent: str,
-#         intent_confidence: float,
-#         slots: List[Dict]
-#     ) -> DialogueState:
-#         """
-#         Update state với turn mới
-        
-#         Args:
-#             session_id: ID của session
-#             user_utterance: Câu nói của user
-#             intent: Intent từ classifier
-#             intent_confidence: Confidence score
-#             slots: List slots từ slot extractor
-        
-#         Returns:
-#             Updated DialogueState
-#         """
-#         state = self.get_state(session_id)
-#         if not state:
-#             raise ValueError(f"Session {session_id} not found")
-        
-#         # Convert intent string to enum
-#         intent_enum = IntentType[intent]
-        
-#         # Convert slots dict to Slot objects
-#         slot_objects = [
-#             Slot(
-#                 type=s['type'],
-#                 value=s['value'],
-#                 confidence=s['confidence'],
-#                 turn_index=len(state.turns)
-#             )
-#             for s in slots
-#         ]
-        
-#         # Create new turn
-#         turn = Turn(
-#             turn_index=len(state.turns),
-#             user_utterance=user_utterance,
-#             intent=intent_enum,
-#             intent_confidence=intent_confidence,
-#             slots_extracted=slot_objects
-#         )
-
-        
-#         # Add turn to state
-#         state.add_turn(turn)
-#         print(f"xem state sau khi add turn: {state}")
-#         return state
-    
-#     def resolve_coreference(self, state: DialogueState) -> DialogueState:
-#         """
-#         Xử lý đại từ chỉ định (it, that, đó, này)
-        
-#         Example:
-#         Turn 1: "Tìm quán phở"
-#         Turn 2: "Nó ở đâu?" → resolve "nó" -> "quán phở"
-#         """
-#         # TODO: Implement coreference resolution
-#         # Placeholder for now
-#         return state
-    
-#     def clear_session(self, session_id: str):
-#         """Xóa session"""
-#         if session_id in self.sessions:
-#             del self.sessions[session_id]
-    
-#     def get_active_sessions(self) -> List[str]:
-#         """Lấy danh sách sessions đang active"""
-#         return list(self.sessions.keys())
-
-
-# # ============================================================
-# # USAGE EXAMPLE
-# # ============================================================
-
-# if __name__ == "__main__":
-#     # Initialize tracker
-#     dst = DialogueStateTracker()
-    
-#     # Create session
-#     session_id = dst.create_session(user_id="user_123")
-#     print(f"Created session: {session_id}")
-    
-#     # Turn 1
-#     state = dst.update_state(
-#         session_id=session_id,
-#         user_utterance="Tìm quán phở gần đây",
-#         intent="RECOMMEND_PLACE_NEARBY",
-#         intent_confidence=0.95,
-#         slots=[
-#             {'type': 'DISH', 'value': 'phở', 'confidence': 0.98},
-#             {'type': 'LOCATION', 'value': 'gần đây', 'confidence': 0.85}
-#         ]
-#     )
-    
-#     print("\n=== Turn 1 ===")
-#     print(f"Intent: {state.current_intent}")
-#     print(f"Filled slots: {state.filled_slots}")
-#     print(f"Missing slots: {state.get_missing_slots()}")
-#     print(f"Is complete: {state.is_complete()}")
-    
-#     # Turn 2: Add more info
-#     state = dst.update_state(
-#         session_id=session_id,
-#         user_utterance="Giá rẻ nhé",
-#         intent="RECOMMEND_PLACE_NEARBY",
-#         intent_confidence=0.90,
-#         slots=[
-#             {'type': 'PRICE', 'value': 'rẻ', 'confidence': 0.92}
-#         ]
-#     )
-    
-#     print("\n=== Turn 2 ===")
-#     print(f"Filled slots: {state.filled_slots}")
-#     print(f"Context: {state.get_context_summary()}")
-
-# from __future__ import annotations
-
-# import uuid
-# from typing import Dict, List, Optional
-
-# from .state_schema import DialogueState, IntentType, Slot, Turn
-
-
-# class DialogueStateTracker:
-#     def __init__(self):
-#         self.sessions: Dict[str, DialogueState] = {}
-
-#     def create_session(self, user_id: Optional[str] = None) -> str:
-#         session_id = str(uuid.uuid4())
-#         self.sessions[session_id] = DialogueState(session_id=session_id, user_id=user_id)
-#         return session_id
-
-#     def get_state(self, session_id: str) -> Optional[DialogueState]:
-#         return self.sessions.get(session_id)
-
-#     def clear_session(self, session_id: str) -> None:
-#         self.sessions.pop(session_id, None)
-
-#     def get_active_sessions(self) -> List[str]:
-#         return list(self.sessions.keys())
-
-#     def update_state(
-#         self,
-#         session_id: str,
-#         user_utterance: str,
-#         intent: str,
-#         intent_confidence: float,
-#         slots: List[Dict],
-#     ) -> DialogueState:
-#         state = self.get_state(session_id)
-#         if not state:
-#             raise ValueError(f"Session {session_id} not found")
-
-#         intent_enum = self._to_intent(intent)
-
-#         slot_objects = [
-#             Slot(
-#                 type=str(s["type"]).upper(),
-#                 value=str(s["value"]).strip(),
-#                 confidence=float(s.get("confidence", 0.0)),
-#                 turn_index=len(state.turns),
-#             )
-#             for s in slots
-#             if s.get("type") and s.get("value")
-#         ]
-
-#         turn = Turn(
-#             turn_index=len(state.turns),
-#             user_utterance=user_utterance,
-#             intent=intent_enum,
-#             intent_confidence=float(intent_confidence),
-#             slots_extracted=slot_objects,
-#         )
-
-#         state.add_turn(turn)
-#         return state
-
-#     @staticmethod
-#     def _to_intent(intent: str) -> IntentType:
-#         normalized = str(intent).strip().upper()
-#         if normalized in IntentType.__members__:
-#             return IntentType[normalized]
-#         return IntentType.NO_CLEAR_INTENT
-
-
-# from __future__ import annotations
-
-# import logging
-# import uuid
-# from typing import Dict, List, Optional
-
-# from .state_schema import DialogueState, IntentType, Slot, Turn
-
-# logger = logging.getLogger(__name__)
-
-
-# class DialogueStateTracker:
-#     def __init__(self, debug: bool = False):
-#         self.sessions: Dict[str, DialogueState] = {}
-#         self.debug = debug
-
-#     def _dbg(self, msg: str, *args) -> None:
-#         if self.debug:
-#             logger.info("[DST] " + msg, *args)
-
-#     def create_session(self, user_id: Optional[str] = None) -> str:
-#         session_id = str(uuid.uuid4())
-#         self.sessions[session_id] = DialogueState(session_id=session_id, user_id=user_id)
-#         self._dbg("create_session user_id=%s -> session_id=%s", user_id, session_id)
-#         return session_id
-
-#     def get_state(self, session_id: str) -> Optional[DialogueState]:
-#         return self.sessions.get(session_id)
-
-#     def clear_session(self, session_id: str) -> None:
-#         self.sessions.pop(session_id, None)
-#         self._dbg("clear_session session_id=%s", session_id)
-
-#     def get_active_sessions(self) -> List[str]:
-#         return list(self.sessions.keys())
-
-#     def update_state(
-#         self,
-#         session_id: str,
-#         user_utterance: str,
-#         intent: str,
-#         intent_confidence: float,
-#         slots: List[Dict],
-#     ) -> DialogueState:
-#         state = self.get_state(session_id)
-#         if not state:
-#             raise ValueError(f"Session {session_id} not found")
-
-#         before_summary = state.get_context_summary()
-#         self._dbg(
-#             "update_state start session_id=%s turn=%d utterance=%r",
-#             session_id,
-#             len(state.turns),
-#             user_utterance,
-#         )
-#         self._dbg("before_state=%s", before_summary)
-
-#         intent_enum = self._to_intent(intent)
-#         self._dbg(
-#             "intent raw=%s -> enum=%s (confidence=%.4f)",
-#             intent,
-#             intent_enum.name,
-#             float(intent_confidence),
-#         )
-
-#         slot_objects = [
-#             Slot(
-#                 type=str(s["type"]).upper(),
-#                 value=str(s["value"]).strip(),
-#                 confidence=float(s.get("confidence", 0.0)),
-#                 turn_index=len(state.turns),
-#             )
-#             for s in slots
-#             if s.get("type") and s.get("value")
-#         ]
-#         self._dbg("slots_in=%s", slots)
-#         self._dbg(
-#             "slots_normalized=%s",
-#             [
-#                 {
-#                     "type": x.type,
-#                     "value": x.value,
-#                     "confidence": x.confidence,
-#                     "turn_index": x.turn_index,
-#                 }
-#                 for x in slot_objects
-#             ],
-#         )
-
-#         turn = Turn(
-#             turn_index=len(state.turns),
-#             user_utterance=user_utterance,
-#             intent=intent_enum,
-#             intent_confidence=float(intent_confidence),
-#             slots_extracted=slot_objects,
-#         )
-
-#         state.add_turn(turn)
-
-#         after_summary = state.get_context_summary()
-#         self._dbg("after_state=%s", after_summary)
-#         self._dbg(
-#             "filled_slots_delta before=%s -> after=%s",
-#             before_summary.get("filled_slots", {}),
-#             after_summary.get("filled_slots", {}),
-#         )
-
-#         return state
-
-#     @staticmethod
-#     def _to_intent(intent: str) -> IntentType:
-#         normalized = str(intent).strip().upper()
-#         if normalized in IntentType.__members__:
-#             return IntentType[normalized]
-#         return IntentType.NO_CLEAR_INTENT
 
 
 # ...existing code...
@@ -361,6 +19,8 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 class DialogueStateTracker:
+    VAGUE_LOCATION_VALUES = {"gần đây", "nearby", "around here", "gan day"}
+
     def __init__(self, debug: bool = False, enable_validator: bool = True):
         self.sessions: Dict[str, DialogueState] = {}
         self.debug = debug
@@ -405,10 +65,11 @@ class DialogueStateTracker:
             self._dbg("suppress slots due intent=%s current_intent=%s", intent_enum.name, getattr(state.current_intent, "name", None))
             slots = []
 
+        # 1) Validator: guardrail cuối trước khi commit state
         accepted_slots = self._validate_slots(slots, intent_enum, user_utterance, turn_index)
         self._dbg("accepted_slots=%s", [s.snapshot() for s in accepted_slots])
 
-        # intent shift detector
+        # 2) Intent shift detector (single source of truth)
         shift = self.intent_shift_detector.detect(
             user_text=user_utterance,
             current_intent=state.current_intent,
@@ -427,21 +88,21 @@ class DialogueStateTracker:
         state.context["dialogue_act"] = shift.dialogue_act
         state.context["block_recommend"] = bool(shift.block_recommend)
         state.context["intent_shift_note"] = shift.note
+        state.context["last_shift_decision"] = {
+            "override_intent": shift.override_intent.value if shift.override_intent else None,
+            "reset_mode": shift.reset_mode,
+            "preserve_slots": list(shift.preserve_slots),
+            "force_replace_slots": list(shift.force_replace_slots),
+            "dialogue_act": shift.dialogue_act,
+            "block_recommend": bool(shift.block_recommend),
+            "note": shift.note,
+        }
         self._dbg(
             "update_state start session_id=%s turn=%d utterance=%r intent=%s",
             session_id, turn_index, user_utterance, intent_enum.name
         )
         self._dbg("before_state=%s", before_summary)
         self._dbg("slots_raw=%s", slots)
-
-        # 1) Validator: guardrail cuối trước khi commit state
-        accepted_slots = self._validate_slots(slots, intent_enum, user_utterance, turn_index)
-        self._dbg("accepted_slots=%s", [s.snapshot() for s in accepted_slots])
-
-        # 2) Intent shift / reset
-        shift_log = self._maybe_reset_on_intent_shift(state, intent_enum, user_utterance)
-        if shift_log:
-            self._dbg("intent_shift_reset=%s", shift_log)
 
         # 3) Semantic merge
         merged_slots, merge_logs = self._semantic_merge(
@@ -460,14 +121,25 @@ class DialogueStateTracker:
             slots_extracted=accepted_slots,
         )
 
-        
-        state.context["state_quality"] = state.get_state_quality()
-        state.context["slot_conflicts"] = len(state.slot_conflicts)
+        # Set current intent before add_turn to keep state transitions deterministic.
+        if intent_enum not in {IntentType.SMALL_TALK, IntentType.NO_CLEAR_INTENT}:
+            state.current_intent = intent_enum
+
         state.add_turn(turn, merge_slots=False)
         state.filled_slots = merged_slots
+
+        use_geo = any(
+            slot.type == "LOCATION" and slot.value == "__NEARBY__"
+            for slot in state.filled_slots.values()
+        )
+        state.context["use_geo"] = use_geo
+        state.context["state_quality"] = state.get_state_quality()
+        state.context["slot_conflicts"] = len(state.slot_conflicts)
+        state.context["missing_slots"] = state.get_missing_slots()
+        state.context["is_complete"] = state.is_complete()
         state.context["state_quality"] = state.get_state_quality()
         state.context["last_merge_logs"] = merge_logs[-10:]
-        state.context["last_shift_log"] = shift_log
+        state.context["last_shift_log"] = state.context.get("last_shift_decision")
 
         after_summary = state.get_context_summary()
         self._dbg("after_state=%s", after_summary)
@@ -485,7 +157,7 @@ class DialogueStateTracker:
         return False
     def _validate_slots(self, slots: List[Dict], intent_enum: IntentType, utterance: str, turn_index: int) -> List[Slot]:
         if not self.slot_validator:
-            return [
+            validated = [
                 Slot(
                     type=str(s["type"]).upper(),
                     value=str(s["value"]).strip(),
@@ -493,13 +165,15 @@ class DialogueStateTracker:
                     turn_index=turn_index,
                     source_intent=intent_enum,
                     source_utterance=utterance,
+                    is_confirmed=float(s.get("confidence", 0.0)) >= 0.70,
                 )
                 for s in slots
                 if s.get("type") and s.get("value")
             ]
+            return [self._normalize_semantic_slot(s) for s in validated]
 
         result = self.slot_validator.validate(slots)
-        return [
+        validated = [
             Slot(
                 type=s.type,
                 value=s.value,
@@ -507,43 +181,16 @@ class DialogueStateTracker:
                 turn_index=turn_index,
                 source_intent=intent_enum,
                 source_utterance=utterance,
+                is_confirmed=s.confidence >= 0.70,
             )
             for s in result.accepted
         ]
+        return [self._normalize_semantic_slot(s) for s in validated]
 
-    def _maybe_reset_on_intent_shift(
-        self,
-        state: DialogueState,
-        new_intent: IntentType,
-        utterance: str,
-    ) -> Optional[Dict[str, Any]]:
-        current = state.current_intent
-        text = utterance.lower()
-
-        reset_cues = ("thôi", "đổi", "món khác", "quán khác", "không muốn", "bỏ qua")
-        has_reset_cue = any(cue in text for cue in reset_cues)
-        intent_changed = current is not None and new_intent != current
-
-        if not has_reset_cue and not intent_changed:
-            return None
-
-        preserve: List[str] = []
-        if new_intent == IntentType.RECOMMEND_FOOD:
-            preserve = ["LOCATION"]
-        elif new_intent == IntentType.RECOMMEND_PLACE_NEARBY:
-            preserve = ["DISH"]
-
-        removed = state.reset_slots(preserve=preserve if has_reset_cue or intent_changed else [], reason="intent_shift_reset")
-        if current != new_intent:
-            state.current_intent = new_intent
-
-        return {
-            "current_intent": current.value if current else None,
-            "new_intent": new_intent.value,
-            "has_reset_cue": has_reset_cue,
-            "preserve": preserve,
-            "removed": {k: v.snapshot() for k, v in removed.items()},
-        }
+    def _normalize_semantic_slot(self, slot: Slot) -> Slot:
+        if slot.type == "LOCATION" and slot.value.strip().lower() in self.VAGUE_LOCATION_VALUES:
+            slot.value = "__NEARBY__"
+        return slot
     def _semantic_merge(
         self,
         state: DialogueState,

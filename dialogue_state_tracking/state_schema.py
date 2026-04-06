@@ -324,7 +324,7 @@ class DialogueState:
 
     def get_required_slots(self) -> List[str]:
         required_slots_map = {
-            IntentType.RECOMMEND_PLACE_NEARBY: ["LOCATION"],
+            IntentType.RECOMMEND_PLACE_NEARBY: ["DISH", "LOCATION"],
             IntentType.RECOMMEND_FOOD: ["DISH"],
             IntentType.ASK_PRICE: ["DISH"],
             IntentType.ASK_OPEN_TIME: ["LOCATION"],
@@ -332,9 +332,18 @@ class DialogueState:
         return required_slots_map.get(self.current_intent, [])
 
     def get_missing_slots(self) -> List[str]:
-        required = set(self.get_required_slots())
-        filled = set(self.filled_slots.keys())
-        return sorted(list(required - filled))
+        missing: List[str] = []
+        for slot_type in self.get_required_slots():
+            slot = self.filled_slots.get(slot_type)
+            if slot is None:
+                missing.append(slot_type)
+                continue
+
+            # LOCATION='__NEARBY__' means we still need a concrete area.
+            if slot_type == "LOCATION" and str(slot.value).strip() == "__NEARBY__":
+                missing.append(slot_type)
+
+        return sorted(missing)
 
     def is_complete(self) -> bool:
         return len(self.get_missing_slots()) == 0

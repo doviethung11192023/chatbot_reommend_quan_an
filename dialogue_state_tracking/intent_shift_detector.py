@@ -20,7 +20,7 @@ class IntentShiftDecision:
 
 class IntentShiftDetector:
     CANCEL_PATTERNS = [
-        r"\b(thôi|không muốn|dừng|bỏ qua|hủy|cancel)\b",
+        r"\b(thôi|không muốn|dừng|bỏ qua|hủy|cancel|không ăn nữa|không muốn ăn nữa)\b",
     ]
     GOODBYE_PATTERNS = [
         r"\b(tạm biệt|bye|goodbye|hẹn gặp lại)\b",
