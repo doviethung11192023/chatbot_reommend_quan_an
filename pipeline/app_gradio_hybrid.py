@@ -66,6 +66,11 @@ def build_orchestrator(args) -> DialogueOrchestrator:
             top_n=args.retrieval_top_n,
             rerank_enabled=bool(args.rerank_model_path),
             rerank_model_path=args.rerank_model_path or None,
+            use_improved_pipeline=not args.no_improved_pipeline,
+            use_sparse=not args.no_sparse,
+            use_dense=not args.no_dense,
+            use_cross_encoder=not args.no_cross_encoder,
+            cross_encoder_model=args.cross_encoder_model,
         )
         retriever = create_default_retriever(settings=settings)
     except Exception as exc:
@@ -147,6 +152,11 @@ def main():
     parser.add_argument("--retrieval-top-k", type=int, default=5)
     parser.add_argument("--retrieval-top-n", type=int, default=200)
     parser.add_argument("--rerank-model-path", type=str, default="")
+    parser.add_argument("--cross-encoder-model", type=str, default="BAAI/bge-reranker-base")
+    parser.add_argument("--no-sparse", action="store_true")
+    parser.add_argument("--no-dense", action="store_true")
+    parser.add_argument("--no-cross-encoder", action="store_true")
+    parser.add_argument("--no-improved-pipeline", action="store_true")
     args = parser.parse_args()
 
     orchestrator = build_orchestrator(args)

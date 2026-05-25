@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import psycopg2
 import pandas as pd
@@ -6,26 +7,26 @@ import json
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# ======================
-# CONFIG
-# ======================
-DB_CONFIG = {
-    "host": "aws-1-ap-northeast-2.pooler.supabase.com",
-    "port": 6543,
-    "database": "postgres",
-    "user": "postgres.ypkwqsbsunlvpoqdadbq",
-    "password": "5$eAK8EV4S+gsKj",
-    "sslmode": "require"
-}
-
 POOL_SIZE = 25  # số quán để label mỗi query
 
+
 # ======================
-# CONNECT DB
+# CONNECT DB (via env vars)
 # ======================
+def _db_config():
+    return {
+        "host": os.environ["DB_HOST"],
+        "port": int(os.environ.get("DB_PORT", "5432")),
+        "database": os.environ["DB_NAME"],
+        "user": os.environ["DB_USER"],
+        "password": os.environ["DB_PASSWORD"],
+        "sslmode": os.environ.get("DB_SSLMODE", "require"),
+    }
+
+
 @st.cache_resource
 def get_conn():
-    return psycopg2.connect(**DB_CONFIG)
+    return psycopg2.connect(**_db_config())
 
 conn = get_conn()
 
