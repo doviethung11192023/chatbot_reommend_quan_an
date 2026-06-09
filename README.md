@@ -1,6 +1,6 @@
-# Chatbot Recommend (Option 3)
+# Chatbot Recommend 
 
-Dự án chatbot gợi ý quán ăn với kiến trúc Option 3: **LLM là người ra quyết định, Rule là lớp an toàn, DST là bộ nhớ hội thoại**.
+Dự án chatbot gợi ý quán ăn với kiến trúc LLM là người ra quyết định, Rule là lớp an toàn, DST là bộ nhớ hội thoại**.
 
 Mục tiêu: Gợi ý quán ăn theo món, khu vực, giá cả, và sở thích người dùng.
 
