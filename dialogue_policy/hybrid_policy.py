@@ -1,184 +1,4 @@
-     
 
-# from __future__ import annotations
-
-# import logging
-# import random
-# from dataclasses import dataclass
-# from typing import Any, Dict, List, Optional, Protocol
-
-# from dialogue_policy.rule_based_policy import Action, RuleBasedPolicy
-# from dialogue_state_tracking.state_schema import DialogueState, IntentType
-
-# logger = logging.getLogger(__name__)
-
-# ACTION_SPACE = {"ASK_SLOT", "CLARIFY", "RECOMMEND", "RESPOND", "FALLBACK"}
-# ACTION_ALIASES = {
-#     "ASK_LOCATION": "ASK_SLOT",
-#     "ASK_PRICE": "ASK_SLOT",
-#     "ASK_OPEN_TIME": "ASK_SLOT",
-#     "ASK_FOOD_TYPE": "ASK_SLOT",
-#     "SMALL_TALK": "RESPOND",
-#     "OUT_OF_SCOPE": "FALLBACK",
-# }
-
-# DEFAULT_TEMPLATES: Dict[str, List[str]] = {
-#     "ASK_SLOT": ["Bạn có thể cho mình thêm thông tin được không?"],
-#     "CLARIFY": ["Bạn có thể nói rõ hơn giúp mình được không?"],
-#     "RECOMMEND": ["Để mình tìm quán phù hợp cho bạn nhé! 🔍"],
-#     "RESPOND": ["Chào bạn! Mình có thể giúp bạn tìm quán ăn ngon nè 😊"],
-#     "FALLBACK": ["Xin lỗi, mình chưa hiểu rõ. Bạn có thể nói lại giúp mình không?"],
-# }
-
-
-# class MLPolicyProtocol(Protocol):
-#     def predict_action(self, state: DialogueState) -> Dict[str, Any]:
-#         ...
-
-
-# class LLMPolicyProtocol(Protocol):
-#     def decide_action(self, state_summary: Dict[str, Any], action_space: List[str]) -> str:
-#         ...
-
-
-# @dataclass
-# class PolicyDecisionLog:
-#     source: str  # RULE | ML | LLM | FALLBACK
-#     action: str
-#     confidence: float = 0.0
-#     note: str = ""
-
-
-# class HybridPolicy:
-#     """Priority: Rule -> ML -> LLM -> fallback"""
-
-#     def __init__(
-#         self,
-#         rule_policy: Optional[RuleBasedPolicy] = None,
-#         ml_policy: Optional[MLPolicyProtocol] = None,
-#         llm_policy: Optional[LLMPolicyProtocol] = None,
-#         ml_conf_threshold: float = 0.7,
-#         templates: Optional[Dict[str, List[str]]] = None,
-#         rng: Optional[random.Random] = None,
-#         debug: bool = False,
-#     ):
-#         self.rule_policy = rule_policy or RuleBasedPolicy()
-#         self.ml_policy = ml_policy
-#         self.llm_policy = llm_policy
-#         self.ml_conf_threshold = ml_conf_threshold
-#         self.templates = templates or DEFAULT_TEMPLATES
-#         self.rng = rng or random.Random(42)
-#         self.debug = debug
-#         self._last_log = PolicyDecisionLog(source="FALLBACK", action="FALLBACK")
-
-#     def _dbg(self, msg: str, *args: Any) -> None:
-#         if self.debug:
-#             logger.info("[HybridPolicy] " + msg, *args)
-
-#     def decide_action(self, state: DialogueState) -> Action:
-#         state_summary = state.get_context_summary()
-#         self._dbg("decide_action state=%s", state_summary)
-
-#         # 1) Rule
-#         matched_rule = None
-#         for idx, rule in enumerate(self.rule_policy.rules):
-#             cond = rule.get("condition", {})
-#             try:
-#                 ok = self.rule_policy._evaluate_condition(cond, state)
-#             except Exception as ex:
-#                 self._dbg("rule[%d] eval error: %s | rule=%s", idx, ex, rule)
-#                 continue
-
-#             self._dbg("rule[%d] condition=%s -> matched=%s", idx, cond, ok)
-#             if ok:
-#                 matched_rule = rule
-#                 break
-
-#         if matched_rule is not None:
-#             self._dbg("matched rule=%s", matched_rule)
-#             rule_action = self.rule_policy.decide_action(state)
-#             a = self._normalize_action(rule_action.type)
-#             self._last_log = PolicyDecisionLog(source="RULE", action=a, confidence=1.0)
-#             self._dbg("selected RULE action=%s", rule_action)
-#             return rule_action
-
-#         self._dbg("no rule matched, trying ML")
-
-#         # 2) ML
-#         if self.ml_policy is not None:
-#             try:
-#                 pred = self.ml_policy.predict_action(state) or {}
-#                 ml_action = self._normalize_action(str(pred.get("action", "FALLBACK")).upper())
-#                 ml_conf = float(pred.get("confidence", 0.0))
-#                 self._dbg("ml_pred=%s normalized_action=%s confidence=%.4f", pred, ml_action, ml_conf)
-
-#                 if ml_action in ACTION_SPACE and ml_conf >= self.ml_conf_threshold:
-#                     self._last_log = PolicyDecisionLog(
-#                         source="ML", action=ml_action, confidence=ml_conf
-#                     )
-#                     action = self._build_action(ml_action)
-#                     self._dbg("selected ML action=%s", action)
-#                     return action
-#                 self._dbg(
-#                     "ML below threshold or invalid (threshold=%.2f), fallback to LLM",
-#                     self.ml_conf_threshold,
-#                 )
-#             except Exception as ex:
-#                 self._dbg("ML error: %s", ex)
-
-#         # 3) LLM
-#         if self.llm_policy is not None:
-#             try:
-#                 llm_action = self.llm_policy.decide_action(
-#                     state.get_context_summary(),
-#                     sorted(ACTION_SPACE),
-#                 )
-#                 llm_action = self._normalize_action(str(llm_action).upper())
-#                 self._dbg("llm_pred=%s normalized_action=%s", llm_action, llm_action)
-
-#                 if llm_action in ACTION_SPACE:
-#                     self._last_log = PolicyDecisionLog(source="LLM", action=llm_action, confidence=0.0)
-#                     action = self._build_action(llm_action)
-#                     self._dbg("selected LLM action=%s", action)
-#                     return action
-
-#                 self._dbg("LLM returned invalid action=%s", llm_action)
-#             except Exception as ex:
-#                 self._last_log = PolicyDecisionLog(
-#                     source="FALLBACK",
-#                     action="FALLBACK",
-#                     note=f"LLM error: {ex}",
-#                 )
-#                 self._dbg("LLM error: %s", ex)
-
-#         # 4) fallback
-#         self._last_log = PolicyDecisionLog(source="FALLBACK", action="FALLBACK")
-#         action = self._build_action("FALLBACK")
-#         self._dbg("selected FALLBACK action=%s", action)
-#         return action
-
-#     def _build_action(self, action_type: str) -> Action:
-#         templates = self.templates.get(action_type, self.templates["FALLBACK"])
-#         template = self.rng.choice(templates) if templates else ""
-#         slot = "LOCATION" if action_type in {"ASK_SLOT", "CLARIFY"} else None
-#         return Action(action_type=action_type, slot=slot, template=template)
-
-#     @staticmethod
-#     def _normalize_action(action: str) -> str:
-#         a = action.strip().upper()
-#         return ACTION_ALIASES.get(a, a)
-
-#     def get_last_decision_log(self) -> Dict[str, Any]:
-#         return {
-#             "source": self._last_log.source,
-#             "action": self._last_log.action,
-#             "confidence": self._last_log.confidence,
-#             "note": self._last_log.note,
-#         }
-
-#     @staticmethod
-#     def is_out_of_scope(state: DialogueState) -> bool:
-#         return state.current_intent == IntentType.OUT_OF_SCOPE
 
 from __future__ import annotations
 
@@ -192,7 +12,7 @@ from dialogue_state_tracking.state_schema import DialogueState, IntentType
 
 logger = logging.getLogger(__name__)
 
-ACTION_SPACE = {"ASK_SLOT", "CLARIFY", "RECOMMEND", "RESPOND", "FALLBACK"}
+ACTION_SPACE = {"ASK_SLOT", "CLARIFY", "CONFIRM", "RECOMMEND", "RESPOND", "FALLBACK"}
 ACTION_ALIASES = {
     "ASK_LOCATION": "ASK_SLOT",
     "ASK_PRICE": "ASK_SLOT",
@@ -216,9 +36,25 @@ DEFAULT_TEMPLATES: Dict[str, List[str]] = {
         "Để mình tìm quán phù hợp cho bạn nhé! 🔍",
         "Ok, mình sẽ gợi ý vài quán hợp với nhu cầu của bạn.",
     ],
+    "CONFIRM": [
+        "Mình hiểu đúng ý bạn rồi chứ? Nếu đúng, mình gợi ý ngay nhé.",
+        "Mình gần đủ thông tin rồi, bạn xác nhận giúp mình một chút nhé.",
+    ],
     "RESPOND": [
         "Chào bạn! Mình có thể giúp bạn tìm quán ăn ngon nè 😊",
         "Mình đây, bạn muốn tìm món gì hôm nay?",
+    ],
+    "CANCEL": [
+        "Ok bạn nhé, khi nào cần tìm quán thì nhắn mình bất cứ lúc nào 👌",
+        "Được rồi, khi nào cần bạn cứ nhắn mình nhé.",
+    ],
+    "GOODBYE": [
+        "Chào bạn, hẹn gặp lại nhé! 👋",
+        "Tạm biệt bạn, chúc bạn một ngày vui vẻ!",
+    ],
+    "CHANGE": [
+        "Ok, bạn muốn đổi sang món nào?",
+        "Bạn muốn đổi sang món gì để mình gợi ý?",
     ],
     "FALLBACK": [
         "Xin lỗi, mình chưa hiểu rõ. Bạn có thể nói lại giúp mình không?",
@@ -236,6 +72,9 @@ class LLMPolicyProtocol(Protocol):
     def decide_action(self, state_summary: Dict[str, Any], action_space: List[str]) -> str:
         ...
 
+    def decide_decision(self, state_summary: Dict[str, Any], action_space: List[str]) -> Dict[str, Any]:
+        ...
+
 
 @dataclass
 class PolicyDecisionLog:
@@ -246,7 +85,7 @@ class PolicyDecisionLog:
 
 
 class HybridPolicy:
-    """Priority mềm: Rule (safe) -> ML -> LLM -> fallback, có anti-repeat."""
+    """Option 3: Rule safety layer + LLM decision maker + DST memory."""
 
     def __init__(
         self,
@@ -254,59 +93,137 @@ class HybridPolicy:
         ml_policy: Optional[MLPolicyProtocol] = None,
         llm_policy: Optional[LLMPolicyProtocol] = None,
         ml_conf_threshold: float = 0.7,
+        confirm_threshold: float = 0.72,
         templates: Optional[Dict[str, List[str]]] = None,
         rng: Optional[random.Random] = None,
         debug: bool = False,
         repeat_window: int = 3,
         allow_ml_llm_escape: bool = True,
+        state_quality_threshold: float = 0.65,
     ):
         self.rule_policy = rule_policy or RuleBasedPolicy()
         self.ml_policy = ml_policy
         self.llm_policy = llm_policy
         self.ml_conf_threshold = ml_conf_threshold
+        self.confirm_threshold = confirm_threshold
         self.templates = templates or DEFAULT_TEMPLATES
         self.rng = rng or random.Random(42)
         self.debug = debug
         self.repeat_window = repeat_window
         self.allow_ml_llm_escape = allow_ml_llm_escape
+        self.state_quality_threshold = state_quality_threshold
         self._last_log = PolicyDecisionLog(source="FALLBACK", action="FALLBACK")
 
     def _dbg(self, msg: str, *args: Any) -> None:
         if self.debug:
             logger.info("[HybridPolicy] " + msg, *args)
 
+
     def decide_action(self, state: DialogueState) -> Action:
-        rule = self._select_best_rule(state)
-        rule_action = self._build_action_from_rule(rule, state) if rule else None
+        dialogue_act = str(getattr(state, "context", {}).get("dialogue_act", "") or "").upper()
+        if dialogue_act in {"CANCEL", "GOODBYE"}:
+            state.context.pop("policy_plan", None)
+            self._last_log = PolicyDecisionLog(source="RULE", action="RESPOND", confidence=1.0, note=f"dialogue_act={dialogue_act}")
+            return self._build_dialogue_act_response(dialogue_act, state)
 
-        # Nếu rule bị lặp ASK_SLOT/CLARIFY nhiều lần thì mở đường cho ML/LLM
-        if rule_action and self._is_repetitive_prompt(state, rule_action.type) and self.allow_ml_llm_escape:
-            self._dbg("rule repetitive detected -> try ML/LLM escape")
-            ml_action = self._try_ml(state)
-            if ml_action:
-                return ml_action
-            llm_action = self._try_llm(state)
-            if llm_action:
-                return llm_action
+        if dialogue_act == "CHANGE":
+            state.context.pop("policy_plan", None)
+            action = self._build_change_action(state)
+            self._last_log = PolicyDecisionLog(source="RULE", action=action.type, confidence=1.0, note="dialogue_act=CHANGE")
+            return action
 
-        # Rule vẫn là safe default
-        if rule_action:
-            self._last_log = PolicyDecisionLog(source="RULE", action=self._normalize_action(rule_action.type), confidence=1.0)
-            self._dbg("selected RULE action=%s", rule_action)
-            return rule_action
+        if bool(getattr(state, "context", {}).get("block_recommend", False)):
+            self._dbg("block_recommend=True -> suppress direct recommend")
+        quality = getattr(state, "get_state_quality", lambda: 1.0)()
+        self._dbg(
+            "decide_action state_quality=%.4f complete=%s missing=%s intent=%s",
+            quality,
+            state.is_complete(),
+            state.get_missing_slots(),
+            state.current_intent.value if state.current_intent else None,
+        )
 
-        ml_action = self._try_ml(state)
-        if ml_action:
-            return ml_action
+        # Rule layer is safety-only in Option 3.
+        safety_rule = self._select_safety_rule(state)
+        if safety_rule is not None:
+            safety_action = self._build_action_from_rule(safety_rule, state)
+            self._last_log = PolicyDecisionLog(source="RULE", action=self._normalize_action(safety_action.type), confidence=1.0, note="safety_rule")
+            return self._apply_state_quality_guard(state, safety_action)
 
-        llm_action = self._try_llm(state)
-        if llm_action:
-            return llm_action
+        llm_action = self._decide_with_llm(state)
+        if llm_action is not None:
+            return self._apply_state_quality_guard(state, llm_action)
+
+        # Fallback deterministic policy if no LLM available.
+        if state.get_missing_slots():
+            self._last_log = PolicyDecisionLog(source="FALLBACK", action="ASK_SLOT", confidence=0.0, note="llm_unavailable")
+            return self._build_action("ASK_SLOT", state)
+        self._last_log = PolicyDecisionLog(source="FALLBACK", action="RECOMMEND", confidence=0.0, note="llm_unavailable")
+        return self._build_action("RECOMMEND", state)
 
         self._last_log = PolicyDecisionLog(source="FALLBACK", action="FALLBACK")
         return self._build_action("FALLBACK", state)
+    
+    def _apply_state_quality_guard(self, state: DialogueState, action: Action) -> Action:
+        quality = getattr(state, "get_state_quality", lambda: 1.0)()
+        block_recommend = bool(getattr(state, "context", {}).get("block_recommend", False))
+        missing_slots = state.get_missing_slots()
+        recommend_intent = state.current_intent in {IntentType.RECOMMEND_FOOD, IntentType.RECOMMEND_PLACE_NEARBY}
 
-    def _select_best_rule(self, state: DialogueState) -> Optional[Dict[str, Any]]:
+        if action.type == "RECOMMEND" and missing_slots:
+            self._dbg("downgrade RECOMMEND -> ASK_SLOT due missing_slots=%s", missing_slots)
+            return self._build_action("ASK_SLOT", state)
+
+        if missing_slots and recommend_intent and action.type not in {"ASK_SLOT", "CLARIFY"}:
+            self._dbg("force ASK_SLOT due missing_slots=%s action=%s", missing_slots, action.type)
+            return self._build_action("ASK_SLOT", state)
+
+        if not missing_slots and action.type in {"ASK_SLOT", "CLARIFY"}:
+            if block_recommend:
+                return self._build_action("CLARIFY", state)
+            self._dbg("upgrade %s -> RECOMMEND due no missing slots", action.type)
+            return self._build_action("RECOMMEND", state)
+
+        if block_recommend and action.type == "RECOMMEND":
+            self._dbg("downgrade RECOMMEND -> CLARIFY due block_recommend flag")
+            return self._build_action("CLARIFY", state)
+
+        return action
+
+    def _build_dialogue_act_response(self, dialogue_act: str, state: DialogueState) -> Action:
+        if dialogue_act == "GOODBYE":
+            templates = self.templates.get("GOODBYE", DEFAULT_TEMPLATES["GOODBYE"])
+        elif dialogue_act == "CANCEL":
+            templates = self.templates.get("CANCEL", DEFAULT_TEMPLATES["CANCEL"])
+        else:
+            templates = self.templates.get("RESPOND", DEFAULT_TEMPLATES["RESPOND"])
+        template = self._pick_non_repeated_template(templates, state)
+        return Action(action_type="RESPOND", slot=None, template=template)
+
+    def _build_change_action(self, state: DialogueState) -> Action:
+        missing = state.get_missing_slots()
+        if missing:
+            slot = self._choose_target_slot(state)
+            template = self._build_change_prompt(slot, state)
+            return Action(action_type="ASK_SLOT", slot=slot, template=template)
+
+        templates = self._get_templates_for_action("RECOMMEND", None)
+        template = self._pick_non_repeated_template(templates, state)
+        return Action(action_type="RECOMMEND", slot=None, template=template)
+
+    def _build_change_prompt(self, slot: Optional[str], state: DialogueState) -> str:
+        if slot == "DISH":
+            templates = self.templates.get("CHANGE", DEFAULT_TEMPLATES["CHANGE"])
+            return self._pick_non_repeated_template(templates, state)
+        if slot == "LOCATION":
+            templates = [
+                "Ok, bạn muốn đổi sang khu vực nào?",
+                "Bạn muốn đổi địa điểm sang khu vực nào để mình gợi ý?",
+            ]
+            return self._pick_non_repeated_template(templates, state)
+        return "Ok, bạn muốn đổi thông tin nào để mình cập nhật?"
+
+    def _select_best_rule(self, state: DialogueState) -> tuple[Optional[Dict[str, Any]], int]:
         matched: List[Dict[str, Any]] = []
         for idx, rule in enumerate(getattr(self.rule_policy, "rules", [])):
             cond = rule.get("condition", {})
@@ -315,50 +232,192 @@ class HybridPolicy:
             if ok:
                 matched.append(rule)
         if not matched:
+            return None, 0
+        matched.sort(key=lambda r: r.get("priority", 0), reverse=True)
+        selected = matched[0]
+        return selected, int(selected.get("priority", 0) or 0)
+
+    def _select_safety_rule(self, state: DialogueState) -> Optional[Dict[str, Any]]:
+        matched: List[Dict[str, Any]] = []
+        for rule in getattr(self.rule_policy, "rules", []):
+            cond = rule.get("condition", {})
+            try:
+                ok = self.rule_policy._evaluate_condition(cond, state)
+            except Exception:
+                ok = False
+            if not ok:
+                continue
+
+            action_type = self._normalize_action(str(rule.get("action", {}).get("type", "FALLBACK")).upper())
+            intent_cond = str(cond.get("intent", "")).upper()
+            is_safety_intent = intent_cond in {"SMALL_TALK", "OUT_OF_SCOPE", "NO_CLEAR_INTENT"}
+            is_safety_action = action_type in {"RESPOND", "FALLBACK"}
+            if is_safety_intent or is_safety_action:
+                matched.append(rule)
+
+        if not matched:
             return None
+
         matched.sort(key=lambda r: r.get("priority", 0), reverse=True)
         return matched[0]
 
     def _build_action_from_rule(self, rule: Dict[str, Any], state: DialogueState) -> Action:
         action_cfg = rule.get("action", {})
         action_type = self._normalize_action(str(action_cfg.get("type", "FALLBACK")).upper())
-        templates = action_cfg.get("templates") or self.templates.get(action_type, self.templates["FALLBACK"])
-        template = self._pick_non_repeated_template(templates, state)
         slot = action_cfg.get("slot_to_ask") or action_cfg.get("slot_to_clarify")
+        if action_type in {"ASK_SLOT", "CLARIFY"} and not slot:
+            slot = self._choose_target_slot(state)
+
+        templates = action_cfg.get("templates") or self._get_templates_for_action(action_type, slot)
+        template = self._pick_non_repeated_template(templates, state)
         return Action(action_type=action_type, slot=slot, template=template)
 
-    def _try_ml(self, state: DialogueState) -> Optional[Action]:
-        if self.ml_policy is None:
-            return None
-        pred = self.ml_policy.predict_action(state) or {}
-        ml_action = self._normalize_action(str(pred.get("action", "FALLBACK")).upper())
-        ml_conf = float(pred.get("confidence", 0.0))
-        self._dbg("ml_pred=%s normalized=%s conf=%.4f", pred, ml_action, ml_conf)
-        if ml_action in ACTION_SPACE and ml_conf >= self.ml_conf_threshold:
-            self._last_log = PolicyDecisionLog(source="ML", action=ml_action, confidence=ml_conf)
-            return self._build_action(ml_action, state)
-        return None
-
-    def _try_llm(self, state: DialogueState) -> Optional[Action]:
+    def _decide_with_llm(self, state: DialogueState) -> Optional[Action]:
         if self.llm_policy is None:
             return None
+
+        payload = self._build_llm_payload(state)
+        self._dbg("llm_payload=%s", payload)
+
         try:
-            pred = self.llm_policy.decide_action(state.get_context_summary(), sorted(ACTION_SPACE))
-            llm_action = self._normalize_action(str(pred).upper())
-            self._dbg("llm_pred=%s normalized=%s", pred, llm_action)
-            if llm_action in ACTION_SPACE:
-                self._last_log = PolicyDecisionLog(source="LLM", action=llm_action, confidence=0.0)
-                return self._build_action(llm_action, state)
+            if hasattr(self.llm_policy, "decide_decision"):
+                decision = self.llm_policy.decide_decision(payload, sorted(ACTION_SPACE)) or {}
+            else:
+                raw_action = self.llm_policy.decide_action(payload, sorted(ACTION_SPACE))
+                decision = {"action": raw_action}
+
+            action_type = self._normalize_action(str(decision.get("action", "FALLBACK")).upper())
+            if action_type not in ACTION_SPACE:
+                action_type = "FALLBACK"
+
+            slot = decision.get("slot")
+            if slot is not None:
+                slot = str(slot).upper().strip()
+            if action_type in {"ASK_SLOT", "CLARIFY"} and not slot:
+                slot = self._choose_target_slot(state)
+
+            response = str(decision.get("response", "") or "").strip()
+            next_action = str(decision.get("next_action", "") or "").upper().strip() or None
+            reason = str(decision.get("reason", "") or "")
+
+            if action_type == "RECOMMEND" and state.get_missing_slots():
+                action_type = "ASK_SLOT"
+                slot = self._choose_target_slot(state)
+
+            if action_type == "CONFIRM" and not next_action and state.is_complete():
+                next_action = "RECOMMEND"
+
+            action = self._build_action(action_type, state, planned_next_action=next_action)
+            if slot and action.type in {"ASK_SLOT", "CLARIFY"}:
+                action.slot = slot
+            if response:
+                action.template = response
+
+            self._last_log = PolicyDecisionLog(source="LLM", action=action.type, confidence=0.0, note=reason)
+            return action
         except Exception as ex:
             self._dbg("LLM error=%s", ex)
             self._last_log = PolicyDecisionLog(source="FALLBACK", action="FALLBACK", note=f"LLM error: {ex}")
         return None
 
-    def _build_action(self, action_type: str, state: DialogueState) -> Action:
-        templates = self.templates.get(action_type, self.templates["FALLBACK"])
+    def _build_llm_payload(self, state: DialogueState) -> Dict[str, Any]:
+        history: List[Dict[str, Any]] = []
+        for t in getattr(state, "turns", [])[-4:]:
+            history.append(
+                {
+                    "user": t.user_utterance,
+                    "bot_action": t.bot_action,
+                    "bot_response": t.bot_response,
+                }
+            )
+        return {
+            "intent": state.current_intent.value if state.current_intent else None,
+            "filled_slots": {k: v.value for k, v in state.filled_slots.items()},
+            "missing_slots": state.get_missing_slots(),
+            "is_complete": state.is_complete(),
+            "state_quality": getattr(state, "get_state_quality", lambda: 1.0)(),
+            "turn_count": len(getattr(state, "turns", [])),
+            "dialogue_act": str(getattr(state, "context", {}).get("dialogue_act", "") or ""),
+            "block_recommend": bool(getattr(state, "context", {}).get("block_recommend", False)),
+            "policy_plan": getattr(state, "context", {}).get("policy_plan", {}),
+            "history": history,
+        }
+
+    def _build_action(
+        self,
+        action_type: str,
+        state: DialogueState,
+        planned_next_action: Optional[str] = None,
+    ) -> Action:
+        slot = self._choose_target_slot(state) if action_type in {"ASK_SLOT", "CLARIFY"} else None
+        templates = self._get_templates_for_action(action_type, slot)
         template = self._pick_non_repeated_template(templates, state)
-        slot = "LOCATION" if action_type in {"ASK_SLOT", "CLARIFY"} else None
+        if action_type == "CONFIRM":
+            template = self._build_confirm_template(state)
+        if planned_next_action:
+            state.context["policy_plan"] = {
+                "current_action": action_type,
+                "next_action": planned_next_action,
+            }
+        elif action_type != "CONFIRM":
+            state.context.pop("policy_plan", None)
         return Action(action_type=action_type, slot=slot, template=template)
+
+    def _choose_target_slot(self, state: DialogueState) -> Optional[str]:
+        missing = state.get_missing_slots()
+        if missing:
+            return missing[0]
+        return None
+
+    def _get_templates_for_action(self, action_type: str, slot: Optional[str]) -> List[str]:
+        if action_type == "ASK_SLOT":
+            if slot == "LOCATION":
+                return [
+                    "Bạn đang ở khu vực nào để mình tìm quán gần bạn?",
+                    "Bạn cho mình biết quận hoặc khu vực cụ thể nhé.",
+                ]
+            if slot == "PRICE":
+                return [
+                    "Bạn muốn mức giá khoảng bao nhiêu ạ?",
+                    "Bạn thích tầm giá bình dân hay cao hơn một chút?",
+                ]
+            if slot == "DISH":
+                return [
+                    "Bạn đang muốn ăn món gì để mình gợi ý đúng hơn?",
+                    "Bạn cho mình biết món bạn muốn ăn nhé.",
+                ]
+
+        if action_type == "CLARIFY" and slot == "LOCATION":
+            return [
+                "Bạn có thể cho mình quận hoặc địa chỉ cụ thể được không?",
+                "Mình cần khu vực cụ thể hơn để gợi ý chính xác cho bạn.",
+            ]
+
+        if action_type == "CONFIRM":
+            return self.templates.get("CONFIRM", DEFAULT_TEMPLATES["CONFIRM"])
+
+        return self.templates.get(action_type, self.templates["FALLBACK"])
+
+    def _build_confirm_template(self, state: DialogueState) -> str:
+        filled = state.filled_slots
+        dish = getattr(filled.get("DISH"), "value", None)
+        location = getattr(filled.get("LOCATION"), "value", None)
+        pieces: List[str] = []
+        if dish:
+            pieces.append(f"món {dish}")
+        if location and location != "__NEARBY__":
+            pieces.append(f"khu vực {location}")
+
+        if pieces:
+            summary = " và ".join(pieces)
+            return f"Mình hiểu bạn đang muốn tìm quán cho {summary}. Mình gợi ý ngay nhé, đúng không?"
+
+        return self._pick_non_repeated_template(self.templates.get("CONFIRM", DEFAULT_TEMPLATES["CONFIRM"]), state)
+
+    def _build_planned_confirm_action(self, state: DialogueState, score: float, source: str, note: str) -> Action:
+        action = self._build_action("CONFIRM", state, planned_next_action="RECOMMEND")
+        self._dbg("planned confirm action source=%s score=%.4f note=%s", source, score, note)
+        return action
 
     def _pick_non_repeated_template(self, templates: List[str], state: DialogueState) -> str:
         if not templates:

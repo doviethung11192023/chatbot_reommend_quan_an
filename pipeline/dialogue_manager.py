@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Protocol
-
+from typing import Any, Dict, List, Optional, Protocol, TYPE_CHECKING
+from pipeline.domain_gate import DomainGate, DomainGateDecision
 import torch
 from transformers import (
     AutoModelForSequenceClassification,
@@ -15,6 +15,9 @@ from transformers import (
 from dialogue_policy.rule_based_policy import RuleBasedPolicy
 from dialogue_state_tracking.dst import DialogueStateTracker
 from dialogue_state_tracking.state_schema import DialogueState, IntentType
+
+if TYPE_CHECKING:
+    from retrieval.hybrid_retriever import HybridRetriever
 
 
 LABEL_ID_TO_INTENT = {
@@ -43,6 +46,8 @@ class SlotPredictor(Protocol):
         ...
 
 
+
+
 @dataclass
 class OrchestratorResult:
     session_id: str
@@ -55,7 +60,10 @@ class OrchestratorResult:
     action_slot: Optional[str]
     action_template: str
     state_summary: Dict[str, Any]
+    state_quality: Optional[float] = None
+    slot_conflicts: int = 0
     policy_log: Optional[Dict[str, Any]] = None
+    recommendations: Optional[List[Dict[str, Any]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         out = {
@@ -73,12 +81,14 @@ class OrchestratorResult:
                 "template": self.action_template,
             },
             "state": self.state_summary,
+            "state_quality": self.state_quality,
+            "slot_conflicts": self.slot_conflicts,
         }
         if self.policy_log is not None:
             out["policy"] = self.policy_log
+        if self.recommendations is not None:
+            out["recommendations"] = self.recommendations
         return out
-
-
 class IntentClassifierHF:
     def __init__(self, model_path: str, device: Optional[str] = None):
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -199,6 +209,12 @@ class DialogueOrchestrator:
         policy: Optional[Any] = None,
         intent_conf_threshold: float = 0.5,
         debug: bool = False,    
+        domain_gate: Optional[DomainGate] = None,
+        retriever: Optional["HybridRetriever"] = None,
+        retrieval_default_lat: Optional[float] = None,
+        retrieval_default_lon: Optional[float] = None,
+        retrieval_default_budget: Optional[int] = None,
+        retrieval_default_distance_km: Optional[float] = None,
     ):
         self.intent_model = intent_model
         self.slot_model = slot_model
@@ -206,6 +222,12 @@ class DialogueOrchestrator:
         self.policy = policy or RuleBasedPolicy()
         self.intent_conf_threshold = intent_conf_threshold
         self.debug = debug  # <-- added
+        self.domain_gate = domain_gate or DomainGate()
+        self.retriever = retriever
+        self.retrieval_default_lat = retrieval_default_lat
+        self.retrieval_default_lon = retrieval_default_lon
+        self.retrieval_default_budget = retrieval_default_budget
+        self.retrieval_default_distance_km = retrieval_default_distance_km
 
     def _dbg(self, msg: str, *args: Any) -> None:
         if self.debug:
@@ -217,49 +239,8 @@ class DialogueOrchestrator:
         session_id = self.dst.create_session(user_id=user_id)
         self._dbg("create_session user_id=%s -> session_id=%s", user_id, session_id)
         return session_id
-    # def process_user_message(self, session_id: str, user_text: str) -> Dict[str, Any]:
-    #     state_before = self.dst.get_state(session_id)
-    #     if state_before is None:
-    #         raise ValueError(f"Session {session_id} not found. Call create_session() first.")
 
-    #     intent_pred = self.intent_model.predict(user_text)
-    #     raw_label = intent_pred.get("intent", "NO_CLEAR_INTENT")
-    #     raw_intent = self._normalize_intent_label(raw_label)
-    #     confidence = float(intent_pred.get("confidence", 0.0))
 
-    #     slots = self._normalize_slots(self.slot_model.extract_slots(user_text))
-    #     resolved_intent = self._resolve_intent(raw_intent, confidence, state_before, slots)
-
-    #     state_after = self.dst.update_state(
-    #         session_id=session_id,
-    #         user_utterance=user_text,
-    #         intent=resolved_intent,
-    #         intent_confidence=confidence,
-    #         slots=slots,
-    #     )
-
-    #     action = self.policy.decide_action(state_after)
-    #     state_after.turns[-1].bot_action = action.type
-    #     state_after.turns[-1].bot_response = action.template
-
-    #     policy_log = None
-    #     if hasattr(self.policy, "get_last_decision_log"):
-    #         policy_log = self.policy.get_last_decision_log()
-
-    #     result = OrchestratorResult(
-    #         session_id=session_id,
-    #         user_text=user_text,
-    #         intent_raw=raw_intent,
-    #         intent_resolved=resolved_intent,
-    #         intent_confidence=confidence,
-    #         slots=slots,
-    #         action_type=action.type,
-    #         action_slot=action.slot,
-    #         action_template=action.template or "",
-    #         state_summary=state_after.get_context_summary(),
-    #         policy_log=policy_log,
-    #     )
-    #     return result.to_dict()
     def process_user_message(self, session_id: str, user_text: str) -> Dict[str, Any]:
         self._dbg("process_user_message(session_id=%s, user_text=%r)", session_id, user_text)
 
@@ -280,14 +261,20 @@ class DialogueOrchestrator:
             raw_intent,
             confidence,
         )
-
+        gate = self.domain_gate.apply(
+            user_text=user_text,
+            predicted_intent=raw_intent,
+            current_intent=state_before.current_intent,
+        )
+        gated_intent = gate.intent
+        self._dbg("domain_gate intent=%s suppress_slots=%s reason=%s", gate.intent, gate.suppress_slots, gate.reason)
         # 2) Slot extraction
-        raw_slots = self.slot_model.extract_slots(user_text)
+        raw_slots = [] if gate.suppress_slots else self.slot_model.extract_slots(user_text)
         slots = self._normalize_slots(raw_slots)
         self._dbg("slots raw=%s normalized=%s", raw_slots, slots)
 
         # 3) Resolve intent with dialogue context
-        resolved_intent = self._resolve_intent(raw_intent, confidence, state_before, slots)
+        resolved_intent = self._resolve_intent(gated_intent, confidence, state_before, slots)
         self._dbg("resolved_intent=%s", resolved_intent)
 
         # 4) Update DST
@@ -316,6 +303,52 @@ class DialogueOrchestrator:
             policy_log = self.policy.get_last_decision_log()
             self._dbg("policy_log=%s", policy_log)
 
+        state_quality = None
+        if hasattr(state_after, "get_state_quality"):
+            try:
+                state_quality = float(state_after.get_state_quality())
+            except Exception:
+                state_quality = None
+        else:
+            state_quality = state_after.context.get("state_quality") if hasattr(state_after, "context") else None
+
+        slot_conflicts = 0
+        if hasattr(state_after, "slot_conflicts"):
+            try:
+                slot_conflicts = len(state_after.slot_conflicts)
+            except Exception:
+                slot_conflicts = 0
+        elif hasattr(state_after, "context") and isinstance(state_after.context, dict):
+            slot_conflicts = int(state_after.context.get("slot_conflicts", 0) or 0)
+
+        recommendations: Optional[List[Dict[str, Any]]] = None
+        if (
+            self.retriever is not None
+            and action.type == "RECOMMEND"
+            and state_after.is_complete()
+            and not bool(getattr(state_after, "context", {}).get("block_recommend", False))
+        ):
+            try:
+                from retrieval.hybrid_retriever import (
+                    build_parsed_query_from_state,
+                    build_user_context_from_state,
+                )
+
+                parsed = build_parsed_query_from_state(
+                    state_after,
+                    user_text,
+                    default_distance_km=self.retrieval_default_distance_km,
+                )
+                user_context = build_user_context_from_state(
+                    state_after,
+                    default_lat=self.retrieval_default_lat,
+                    default_lon=self.retrieval_default_lon,
+                    default_budget=self.retrieval_default_budget,
+                )
+                recommendations = self.retriever.retrieve(parsed, user_context)
+            except Exception as exc:
+                self._dbg("retrieval skipped: %s", exc)
+
         result = OrchestratorResult(
             session_id=session_id,
             user_text=user_text,
@@ -327,7 +360,10 @@ class DialogueOrchestrator:
             action_slot=action.slot,
             action_template=action.template or "",
             state_summary=state_after.get_context_summary(),
+            state_quality=state_quality,
+            slot_conflicts=slot_conflicts,
             policy_log=policy_log,
+            recommendations=recommendations,
         )
         out = result.to_dict()
         self._dbg("result=%s", out)
@@ -361,6 +397,9 @@ class DialogueOrchestrator:
             out.append({"type": slot_type, "value": value, "confidence": conf})
         return out
 
+    
+
+    #     return predicted_intent
     def _resolve_intent(
         self,
         predicted_intent: str,
@@ -368,6 +407,12 @@ class DialogueOrchestrator:
         state_before: DialogueState,
         slots: List[Dict[str, Any]],
     ) -> str:
+        if predicted_intent in {"SMALL_TALK", "OUT_OF_SCOPE"}:
+            return predicted_intent
+
+        if predicted_intent == "NO_CLEAR_INTENT" and state_before.current_intent is None:
+            return predicted_intent
+
         if confidence < self.intent_conf_threshold and state_before.current_intent:
             return state_before.current_intent.name
 
